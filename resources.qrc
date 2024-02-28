@@ -1,0 +1,8 @@
+<RCC>
+    <qresource prefix="/plugins/osm_parser" >
+        <file>icon.svg</file>
+    </qresource>
+    <qresource prefix="/plugins/osm_parser/images" >
+        <file>Welcome.png</file>
+    </qresource>
+</RCC>
