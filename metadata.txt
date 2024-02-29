@@ -25,7 +25,7 @@ hasProcessingProvider=no
 # Tags are comma separated with spaces allowed
 tags= AI, OSM, open street map, shared, collaboration, maps, publishing, public, comments, data, layers, realtime, publication, webmapping, internet, webgis, capture, catalog
 
-homepage=http://homepage
+homepage=https://aino.world/
 category=Plugins
 icon=icon.svg
 # experimental flag
