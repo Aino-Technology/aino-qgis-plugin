@@ -11,7 +11,7 @@ author=aino.world
 email=hello@aino.world.com
 
 about=Aino converts natural language prompts such as "parks in Barcelona" into vector layers containing relevant OSM data.<br> If you wish to collaborate, please contact us at hello@aino.world.
-
+tracker=https://github.com/Aino-Technology/aino-qgis-plugin/issues
 
 repository=https://github.com/Aino-Technology/aino-qgis-plugin
 # End of mandatory metadata
