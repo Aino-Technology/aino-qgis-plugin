@@ -1,11 +1,9 @@
 from qgis.core import QgsVectorLayer, QgsProject, QgsJsonExporter, QgsWkbTypes
 from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QWidget, QCheckBox, \
     QHBoxLayout
-from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtGui import QCursor
-import os
+
 import json
-import io
+
 
 def update_style(button):
     current_style = button.styleSheet().rstrip(';')
@@ -24,6 +22,7 @@ def toggle_button_state(button):
     button.setEnabled(not button.isEnabled())
 
     update_style(button)
+
 
 def add_data(data, name):
     data_json = json.loads(data)
@@ -54,6 +53,7 @@ def add_data(data, name):
         polygon_geojson = json.dumps({'type': 'FeatureCollection', 'features': polygon_features})
         vector_layer = QgsVectorLayer(polygon_geojson, f'{name}_polygons', "ogr")
         QgsProject.instance().addMapLayer(vector_layer)
+
 
 def update_labels(api_response, main_ui):
     for label in main_ui.labels.values():
@@ -119,4 +119,3 @@ def get_selected_options(main_ui):
         if check_box.isChecked():
             selected_options.append(option)
     return selected_options
-

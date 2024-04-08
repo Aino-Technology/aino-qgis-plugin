@@ -1,7 +1,7 @@
 from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox
 from qgis.PyQt import uic
 import os
-from osm_parser import API_LINK
+from src import API_LINK
 
 import requests
 
@@ -10,7 +10,7 @@ class LoginDialog(QDialog):
     def __init__(self, main_ui):
         super().__init__()
         uic.loadUi(os.path.join(
-            os.path.dirname(__file__), './ui_files/login.ui'), self)
+            os.path.dirname(__file__), 'ui_files/login.ui'), self)
 
         self.main_ui = main_ui
         self.process_login.clicked.connect(self.check_credentials)

@@ -8,7 +8,7 @@
                              -------------------
         begin                : 2023-12-28
         copyright            : (C) 2023 by Aino inc.
-        email                : pulinetsag@gmail.com
+        email                : hello@aino.world
         git sha              : $Format:%H$
  ***************************************************************************/
 
@@ -22,7 +22,6 @@
  ***************************************************************************/
  This script initializes the plugin, making it known to QGIS.
 """
-API_LINK = "https://api.aino.world"
 
 
 # noinspection PyPep8Naming

@@ -5,6 +5,7 @@ from qgis.PyQt import QtWidgets
 from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QVBoxLayout
 from .login_tab import LoginDialog
 from .signup_tab import SignupDialog
+
 try:
     import webbrowser
 except ModuleNotFoundError:
@@ -15,7 +16,7 @@ except ModuleNotFoundError:
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 FORM_CLASS_start, _ = uic.loadUiType(os.path.join(
-    os.path.dirname(__file__), './ui_files/start.ui'))
+    os.path.dirname(__file__), 'ui_files/start.ui'))
 
 
 class OsmParserDialogStart(QtWidgets.QDialog, FORM_CLASS_start):
@@ -49,7 +50,7 @@ class OsmParserDialogStart(QtWidgets.QDialog, FORM_CLASS_start):
 
     def handle_signup(self):
         self.hide()
-        auth_url ='https://beta.aino.world/auth'
+        auth_url = 'https://beta.aino.world/auth'
         webbrowser.open(auth_url, new=0, autoraise=True)
         signup_dialog = SignupDialog(self.main_ui)
         if signup_dialog.exec_():

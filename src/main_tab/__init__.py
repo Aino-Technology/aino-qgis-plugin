@@ -9,17 +9,19 @@ from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from src.login.login_tab import LoginDialog
 from qgis.core import QgsProject
 from .helpers import add_data, update_scroll_area, get_selected_options, update_labels, toggle_button_state
-from osm_parser import API_LINK
-
+from src import API_LINK
 
 FORM_CLASS_main, _ = uic.loadUiType(os.path.join(
-    os.path.dirname(__file__), './ui_files/main.ui'))
+    os.path.dirname(__file__), 'ui_files/main.ui'))
 
 
 class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def __init__(self, parent=None, osm_parser=None):
         super(OsmParserDialogMain, self).__init__(parent)
+        self.manager = None
+        self.token = None
+        self.project_id = None
         self.setupUi(self)
         self.main_ui = osm_parser
         self.first_step = True
@@ -89,7 +91,6 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             except Exception as e:
                 toggle_button_state(self.upload_button)
                 QMessageBox.information(self, "", str(e))
-
 
         else:
             QMessageBox.warning(None, "Warning", "Please, provide link to Aino project")
@@ -200,4 +201,3 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.finish_upload(result)
 
         reply.deleteLater()
-

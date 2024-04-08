@@ -13,7 +13,6 @@ import sys
 
 plugin_dir = os.path.dirname(__file__)
 
-
 if plugin_dir not in sys.path:
     sys.path.insert(0, plugin_dir)
 
@@ -33,6 +32,8 @@ class OsmParser:
         :type iface: QgsInterface
         """
         # Save reference to the QGIS interface
+        self.main_dlg = None
+        self.start_dlg = None
         self.iface = iface
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
@@ -173,7 +174,7 @@ class OsmParser:
 
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
-        if self.first_start == True:
+        if self.first_start:
             self.first_start = False
             self.start_dlg = OsmParserDialogStart(osm_parser=self)
             self.main_dlg = OsmParserDialogMain(osm_parser=self)
