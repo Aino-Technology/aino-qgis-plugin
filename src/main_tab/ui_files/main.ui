@@ -50,7 +50,7 @@
    <attribute name="title">
     <string>Aino</string>
    </attribute>
-   <widget class="QPlainTextEdit" name="prompt_field">
+   <widget class="QTextEdit" name="prompt_field">
     <property name="geometry">
      <rect>
       <x>20</x>
@@ -304,7 +304,7 @@ border-radius: 10px;
      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Type any query like &amp;quot;trees in Paris&amp;quot; or &amp;quot;fountains in Barcelona&amp;quot;, then press &amp;quot;GO&amp;quot;. &lt;br/&gt;Aino will generate a new layer with the data from OSM.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
     </property>
    </widget>
-   <widget class="QLabel" name="label_4">
+   <widget class="QLabel" name="prompts_label">
     <property name="geometry">
      <rect>
       <x>400</x>
@@ -314,7 +314,20 @@ border-radius: 10px;
      </rect>
     </property>
     <property name="text">
-     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;right&quot;&gt;&lt;span style=&quot; color:#595959;&quot;&gt;100/100 prompts left&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;right&quot;&gt;&lt;span style=&quot; color:#595959;&quot;&gt;0/100 prompts left&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+    </property>
+   </widget>
+   <widget class="QLabel" name="trial_label">
+    <property name="geometry">
+     <rect>
+      <x>20</x>
+      <y>110</y>
+      <width>131</width>
+      <height>21</height>
+     </rect>
+    </property>
+    <property name="text">
+     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; color:#595959;&quot;&gt;0/7 days left&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
     </property>
    </widget>
   </widget>

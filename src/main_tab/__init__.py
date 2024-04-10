@@ -1,33 +1,40 @@
-import os
 import json
+import os
 import re
-from qgis.PyQt import uic
-from qgis.PyQt import QtWidgets
-from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QWidget, QCheckBox
-from qgis.PyQt.QtCore import QThread, QVariant, pyqtSignal, pyqtSlot, QDate, Qt, QByteArray, QUrl
+
+import requests
 from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
-from src.login.login_tab import LoginDialog
+from qgis.PyQt import QtWidgets
+from qgis.PyQt import uic
+from qgis.PyQt.QtCore import QVariant, QDate, Qt, QByteArray, QUrl
+from qgis.PyQt.QtWidgets import QMessageBox
 from qgis.core import QgsProject
-from .helpers import add_data, update_scroll_area, get_selected_options, update_labels, toggle_button_state
+
 from src import API_LINK
+from .helpers import add_data, update_scroll_area, get_selected_options, update_labels, toggle_button_state, \
+    update_days_label, update_prompts_left_label, block_input_area
 
 FORM_CLASS_main, _ = uic.loadUiType(os.path.join(
-    os.path.dirname(__file__), 'ui_files/main.ui'))
+    os.path.dirname(__file__), './ui_files/main.ui'))
 
 
 class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def __init__(self, parent=None, osm_parser=None):
         super(OsmParserDialogMain, self).__init__(parent)
-        self.manager = None
+        self.manager = QNetworkAccessManager()
         self.token = None
         self.project_id = None
-        self.setupUi(self)
         self.main_ui = osm_parser
         self.first_step = True
+        self.setupUi(self)
+
         self.go_button.clicked.connect(self.start_osm_thread)
         self.upload_button.clicked.connect(self.upload_process)
         self.currentChanged.connect(lambda _: update_scroll_area(self))
+        self.limits_response = None
+        self.subscriptions_response = None
+        self.trial_label.setVisible(False)
 
     def upload_next(self):
         project_link = self.project_link_text.text()
@@ -42,7 +49,6 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def upload_process(self):
 
-        self.token = self.main_ui.bearer_token
         project_link = self.project_link_text.text()
         pattern = r"https://beta\.aino\.world/project/(\d+)"
         match = re.search(pattern, project_link)
@@ -87,7 +93,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                         {'name': name, 'feature_collection': {"type": "FeatureCollection", "features": []}})
 
             try:
-                self.upload_layers(list(layer_sources), self.token, self.project_id)
+                self.upload_layers(list(layer_sources), self.project_id)
             except Exception as e:
                 toggle_button_state(self.upload_button)
                 QMessageBox.information(self, "", str(e))
@@ -103,17 +109,15 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def start_osm_thread(self):
         prompt = self.prompt_field.toPlainText()
-        token = self.main_ui.bearer_token
 
-        self.send_osm_request(prompt, token)
+        self.send_osm_request(prompt)
 
-    def send_osm_request(self, prompt, auth_token):
+    def send_osm_request(self, prompt):
         toggle_button_state(self.go_button)
-        self.manager = QNetworkAccessManager()
         api_url = f'{API_LINK}/public/ai_query/parser'
         request = QNetworkRequest(QUrl(api_url))
         request.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
-        request.setRawHeader(b"Authorization", f"Bearer {auth_token}".encode())
+        request.setRawHeader(b"Authorization", f"Bearer {self.token}".encode())
 
         data = QByteArray(json.dumps({'prompt': prompt}).encode())
 
@@ -152,6 +156,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
                 result_elements = len(data_dict['features'])
                 add_data(data, prompt)
+                self.update_interface_with_restrictions_start()
                 update_scroll_area(self)
                 if result_elements:
                     QMessageBox.information(self, "", f'Found {result_elements} elements')
@@ -167,12 +172,11 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             QMessageBox.critical(self, "", f"An error occurred: {e}, try again")
             pass
 
-    def upload_layers(self, features_with_names, auth_token, project_id):
-        self.manager = QNetworkAccessManager()
+    def upload_layers(self, features_with_names, project_id):
         api_url = f'{API_LINK}/public/project/files/bulk_add_geojson'
         request = QNetworkRequest(QUrl(api_url))
         request.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
-        request.setRawHeader(b"Authorization", f"Bearer {auth_token}".encode())
+        request.setRawHeader(b"Authorization", f"Bearer {self.token}".encode())
 
         data = {
             'qgis_layers': features_with_names,
@@ -201,3 +205,52 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.finish_upload(result)
 
         reply.deleteLater()
+
+    def process_result(self, response, request_type):
+        if response.status_code == 200:  # HTTP OK
+            json_response = response.json()
+            if request_type == 'subscription':
+                self.subscriptions_response = json_response
+            elif request_type == 'limits':
+                self.limits_response = json_response
+
+            if self.subscriptions_response is not None and self.limits_response is not None:
+                self.update_interface_with_restrictions_finish()
+
+    def get_current_subscription(self):
+        api_url = f'{API_LINK}/user/current_subscription'
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}"
+        }
+        response = requests.get(api_url, headers=headers)
+        self.process_result(response, 'subscription')
+
+    def get_current_limits(self):
+        api_url = f'{API_LINK}/user/limits'
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.token}"
+        }
+        response = requests.get(api_url, headers=headers)
+        self.process_result(response, 'limits')
+
+    def update_interface_with_restrictions_finish(self):
+        subscription_plan = self.subscriptions_response["current_subscription"]["subscription_plan_code"]
+        if subscription_plan != "free":
+            self.trial_label.setVisible(True)
+
+        prompts_left = update_prompts_left_label(self, self.limits_response)
+        update_days_label(self, self.subscriptions_response)
+
+        if (subscription_plan == "free" or subscription_plan == "trial") and prompts_left == 0:
+            block_input_area(self, "subscription")
+        elif subscription_plan == "individual" and prompts_left == 0:
+            block_input_area(self, "prompts")
+        else:
+            self.prompt_field.setReadOnly(False)
+            self.prompt_field.clear()
+
+    def update_interface_with_restrictions_start(self):
+        self.get_current_subscription()
+        self.get_current_limits()

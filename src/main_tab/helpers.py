@@ -3,6 +3,8 @@ from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushBu
     QHBoxLayout
 
 import json
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 def update_style(button):
@@ -119,3 +121,55 @@ def get_selected_options(main_ui):
         if check_box.isChecked():
             selected_options.append(option)
     return selected_options
+
+
+def update_days_label(main_ui, api_response):
+    expiration_datetime = api_response["current_subscription"]["expiration_date"]
+    expiration_datetime = datetime.strptime(expiration_datetime, "%Y-%m-%dT%H:%M:%S.%f%z")
+
+    start_datetime = api_response["current_subscription"]["start_date"]
+    start_datetime = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%M:%S.%f%z")
+
+    current_datetime = datetime.utcnow()
+    current_datetime = current_datetime.replace(tzinfo=ZoneInfo("UTC"))
+
+    delta_remaining = expiration_datetime - current_datetime
+    delta_start_datetime = expiration_datetime - start_datetime
+
+    if current_datetime < expiration_datetime:
+        main_ui.trial_label.setText(f'{delta_remaining.days}/{delta_start_datetime.days} days left')
+
+
+def update_prompts_left_label(main_ui, api_response):
+    total_amount = None
+    left_amount = None
+    limits = api_response["limits"]
+    for limit in limits:
+        if limit["name"] == "ai_query":
+            total_amount = limit["total_amount"]
+            left_amount = limit["left_amount"]
+    if total_amount is not None and left_amount is not None:
+
+        if left_amount > 0:
+            main_ui.prompts_label.setText(f'{left_amount}/{total_amount} prompts')
+            main_ui.prompts_label.setStyleSheet("")
+
+        else:
+            main_ui.prompts_label.setText(f'{left_amount}/{total_amount} prompts')
+            main_ui.prompts_label.setStyleSheet("color: red;")
+    return left_amount
+
+
+def block_input_area(main_ui, reason):
+    link = "<a href='http://Beta.Aino.world'>Beta.Aino.world</a>"
+    message = None
+    if reason == "subscription":
+        message = f"To get more prompts upgrade your subscription at {link}"
+    elif reason == "prompts":
+        message = "To get more propts please contact us via hello@aino.world"
+    if message:
+        main_ui.prompt_field.setReadOnly(True)
+        main_ui.prompt_field.clear()
+        main_ui.prompt_field.setHtml(message)
+        main_ui.prompt_field.setStyleSheet("background-color: #F0F0F0; color: #A0A0A0;")
+        toggle_button_state(main_ui.go_button)

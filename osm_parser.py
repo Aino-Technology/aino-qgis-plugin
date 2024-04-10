@@ -186,8 +186,11 @@ class OsmParser:
             result = self.start_dlg.exec_()
 
             if result:
+                self.main_dlg.token = self.bearer_token
+                self.main_dlg.update_interface_with_restrictions_start()
                 self.start_dlg.hide()
                 self.main_dlg.show()
 
         else:
+            self.main_dlg.update_interface_with_restrictions_start()
             self.main_dlg.show()
