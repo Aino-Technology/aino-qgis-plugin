@@ -1,10 +1,11 @@
-from qgis.core import QgsVectorLayer, QgsProject, QgsJsonExporter, QgsWkbTypes
-from qgis.PyQt.QtWidgets import QDialog, QVBoxLayout, QLabel, QLineEdit, QPushButton, QMessageBox, QWidget, QCheckBox, \
-    QHBoxLayout
-
 import json
 from datetime import datetime
+from math import ceil
 from zoneinfo import ZoneInfo
+
+from qgis.PyQt.QtWidgets import QVBoxLayout, QLabel, QWidget, QCheckBox, \
+    QHBoxLayout
+from qgis.core import QgsVectorLayer, QgsProject, QgsWkbTypes
 
 
 def update_style(button):
@@ -136,8 +137,16 @@ def update_days_label(main_ui, api_response):
     delta_remaining = expiration_datetime - current_datetime
     delta_start_datetime = expiration_datetime - start_datetime
 
+    days_remaining = delta_remaining.total_seconds() / (3600 * 24)
+    days_since_start = delta_start_datetime.total_seconds() / (3600 * 24)
+
+    if expiration_datetime == current_datetime:
+        days_remaining_rounded = 0
+    else:
+        days_remaining_rounded = ceil(days_remaining)
+
     if current_datetime < expiration_datetime:
-        main_ui.trial_label.setText(f'{delta_remaining.days}/{delta_start_datetime.days} days left')
+        main_ui.trial_label.setText(f'{days_remaining_rounded}/{round(days_since_start)} days left')
 
 
 def update_prompts_left_label(main_ui, api_response):

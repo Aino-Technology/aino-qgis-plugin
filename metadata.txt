@@ -4,9 +4,9 @@
 
 [general]
 name=Aino
-qgisMinimumVersion=3.0
+qgisMinimumVersion=3.25
 description=AI assistant to download data from OSM
-version=0.1.0
+version=0.1.1
 author=aino.world
 email=hello@aino.world.com
 
