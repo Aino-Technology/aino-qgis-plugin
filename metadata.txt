@@ -5,10 +5,11 @@
 [general]
 name=Aino
 qgisMinimumVersion=3.25
+qgisMaximumVersion=4.99
 description=AI assistant to download data from OSM
 version=0.1.2
 author=aino.world
-email=hello@aino.world.com
+email=hello@aino.world
 
 about=Aino converts natural language prompts such as "parks in Barcelona" into vector layers containing relevant OSM data.<br> If you wish to collaborate, please contact us at hello@aino.world.
 tracker=https://github.com/Aino-Technology/aino-qgis-plugin/issues
@@ -44,4 +45,3 @@ Category of the plugin: Raster, Vector, Database or Web
 
 # If the plugin can run on QGIS Server.
 server=False
-

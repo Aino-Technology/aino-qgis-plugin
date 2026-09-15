@@ -4,9 +4,6 @@ from qgis.PyQt.QtWidgets import QAction
 
 # Initialize Qt resources from file resources.py
 from .resources import *
-# Import the code for the dialog
-# from .osm_parser_dialog import OsmParserDialogStart, OsmParserDialogMain
-
 import os.path
 import pathlib
 import sys

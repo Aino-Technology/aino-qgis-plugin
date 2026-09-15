@@ -40,10 +40,10 @@ LOCALES =
 SOURCES = \
 	__init__.py \
 	osm_parser.py \
-	osm_parser_dialog.py \
 	src/__init__.py \
 	src/login/__init__.py \
 	src/login/login_tab.py \
+	src/login/signup_tab.py \
 	src/login/start_tab.py \
 	src/main_tab/__init__.py \
 	src/main_tab/helpers.py
@@ -53,21 +53,15 @@ PLUGINNAME = osm_parser
 PY_FILES = \
 	__init__.py \
 	osm_parser.py \
-	osm_parser_dialog.py \
 	src/__init__.py \
 	src/login/__init__.py \
 	src/login/login_tab.py \
+	src/login/signup_tab.py \
 	src/login/start_tab.py \
 	src/main_tab/__init__.py \
 	src/main_tab/helpers.py
 
-UI_FILES = \
-	src/login/ui_files/*.ui \
-	src/main_tab/ui_files/*.ui
-
-EXTRAS = metadata.txt icon.png
-
-EXTRA_DIRS = src/login src/main_tab src
+EXTRAS = metadata.txt icon.svg Welcome.png
 
 COMPILED_RESOURCE_FILES = resources.py
 
@@ -77,9 +71,7 @@ PEP8EXCLUDE=pydev,resources.py,conf.py,third_party,ui
 # Normally you would not need to edit below here
 #################################################
 
-HELP = help/build/html
-
-PLUGIN_UPLOAD = $(c)/plugin_upload.py
+PLUGIN_UPLOAD = plugin_upload.py
 
 RESOURCE_SRC=$(shell grep '^ *<file' resources.qrc | sed 's@</file>@@g;s/.*>//g' | tr '\n' ' ')
 
@@ -94,13 +86,13 @@ default:
 
 compile: $(COMPILED_RESOURCE_FILES)
 
-%.py : %.qrc $(RESOURCES_SRC)
+%.py : %.qrc $(RESOURCE_SRC)
 	pyrcc5 -o $*.py  $<
 
 %.qm : %.ts
 	$(LRELEASE) $<
 
-test: compile transcompile
+test: compile
 	@echo
 	@echo "----------------------"
 	@echo "Regression Test Suite"
@@ -118,23 +110,16 @@ test: compile transcompile
 	@echo "e.g. source run-env-linux.sh <path to qgis install>; make test"
 	@echo "----------------------"
 
-deploy: compile doc transcompile
+deploy: compile
 	@echo
 	@echo "------------------------------------------"
 	@echo "Deploying plugin to your .qgis2 directory."
 	@echo "------------------------------------------"
-	# The deploy  target only works on unix like operating system where
-	# the Python plugin directory is located at:
-	# $HOME/$(QGISDIR)/python/plugins
+	# The deploy target only works on Unix systems with QGIS installed.
 	mkdir -p $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vf $(PY_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vf $(UI_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vf $(COMPILED_RESOURCE_FILES) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vf $(EXTRAS) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vfr i18n $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
-	cp -vfr $(HELP) $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)/help
-	# Copy extra directories if any
-	(foreach EXTRA_DIR,(EXTRA_DIRS), cp -R (EXTRA_DIR) (HOME)/(QGISDIR)/python/plugins/(PLUGINNAME)/;)
+	cp -vf __init__.py osm_parser.py $(COMPILED_RESOURCE_FILES) $(EXTRAS) \
+		$(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
+	cp -vfr src $(HOME)/$(QGISDIR)/python/plugins/$(PLUGINNAME)
 
 
 # The dclean target removes compiled python files from plugin directory

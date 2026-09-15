@@ -3,19 +3,43 @@ import os
 import re
 
 import requests
-from PyQt5.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from qgis.PyQt import QtWidgets
 from qgis.PyQt import uic
 from qgis.PyQt.QtCore import QVariant, QDate, Qt, QByteArray, QUrl
+from qgis.PyQt.QtNetwork import QNetworkAccessManager, QNetworkRequest
 from qgis.PyQt.QtWidgets import QMessageBox
 from qgis.core import QgsProject
 
 from src import API_LINK
-from .helpers import add_data, update_scroll_area, get_selected_options, update_labels, toggle_button_state, \
-    update_days_label, update_prompts_left_label, block_input_area
+from .helpers import (
+    add_data,
+    block_input_area,
+    get_selected_options,
+    set_button_enabled,
+    toggle_button_state,
+    update_days_label,
+    update_labels,
+    update_prompts_left_label,
+    update_scroll_area,
+)
 
 FORM_CLASS_main, _ = uic.loadUiType(os.path.join(
     os.path.dirname(__file__), './ui_files/main.ui'))
+
+PROJECT_URL_PATTERN = re.compile(r"https://app\.aino\.world/project/(\d+)")
+IGNORED_ATTRIBUTES = {"iconCaption", "marker-color"}
+
+
+def serialize_attribute(value):
+    if isinstance(value, QVariant):
+        if value.isNull():
+            return None
+        value = value.value()
+
+    if isinstance(value, QDate):
+        return value.toString(Qt.ISODate)
+
+    return value
 
 
 class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
@@ -38,8 +62,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def upload_next(self):
         project_link = self.project_link_text.text()
-        pattern = r"https://beta\.aino\.world/project/(\d+)"
-        match = re.search(pattern, project_link)
+        match = PROJECT_URL_PATTERN.search(project_link)
         if match:
             self.project_id = match.group(1)
             update_scroll_area(self)
@@ -50,8 +73,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
     def upload_process(self):
 
         project_link = self.project_link_text.text()
-        pattern = r"https://beta\.aino\.world/project/(\d+)"
-        match = re.search(pattern, project_link)
+        match = PROJECT_URL_PATTERN.search(project_link)
 
         if match:
             toggle_button_state(self.upload_button)
@@ -71,14 +93,17 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                             'type': 'FeatureCollection',
                             'features': []
                         }
-                        attributes = layer.fields().names()
+                        attributes = [
+                            attribute
+                            for attribute in layer.fields().names()
+                            if attribute not in IGNORED_ATTRIBUTES
+                        ]
 
                         for feature in layer.getFeatures():
-                            properties = {k: (None if isinstance(v, QVariant) and v.isNull() else v.toString(
-                                Qt.ISODate) if isinstance(v, QDate) else v) for k, v in
-                                          zip(attributes, [feature[prop] for prop in
-                                                           [attribute for attribute in attributes if
-                                                            attribute not in ['iconCaption', 'marker-color']]])}
+                            properties = {
+                                attribute: serialize_attribute(feature[attribute])
+                                for attribute in attributes
+                            }
 
                             geom = feature.geometry()
                             geojson['features'].append({
@@ -90,7 +115,14 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                         layer_sources.append({'name': name, 'feature_collection': geojson})
                 else:
                     layer_sources.append(
-                        {'name': name, 'feature_collection': {"type": "FeatureCollection", "features": []}})
+                        {
+                            "name": name,
+                            "feature_collection": {
+                                "type": "FeatureCollection",
+                                "features": [],
+                            },
+                        }
+                    )
 
             try:
                 self.upload_layers(list(layer_sources), self.project_id)
@@ -102,10 +134,14 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             QMessageBox.warning(None, "Warning", "Please, provide link to Aino project")
 
     def finish_upload(self, result):
-        json_result = json.loads(result)
-        text = json.loads(json_result['text'])
-        update_labels(text, self)
-        toggle_button_state(self.upload_button)
+        try:
+            json_result = json.loads(result)
+            text = json.loads(json_result["text"])
+            update_labels(text, self)
+        except (TypeError, ValueError, KeyError) as error:
+            QMessageBox.critical(self, "Upload failed", f"Invalid server response: {error}")
+        finally:
+            set_button_enabled(self.upload_button, True)
 
     def start_osm_thread(self):
         prompt = self.prompt_field.toPlainText()
@@ -126,22 +162,21 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def on_osm_reply_finished(self, prompt):
         reply = self.sender()
-        if reply.error():
-            print(f"Error: {reply.errorString()}")
-            return
-
-        status_code = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
-        response_data = reply.readAll().data()
-
         try:
-            text = response_data.decode()
-        except UnicodeDecodeError:
-            text = ''
+            if reply.error():
+                error_text = reply.readAll().data().decode(errors="replace")
+                message = error_text or reply.errorString()
+                set_button_enabled(self.go_button, True)
+                QMessageBox.critical(self, "Request failed", message)
+                return
 
-        result = json.dumps({'status': status_code, 'text': text})
-        self.finish_ai(result, prompt)
-
-        reply.deleteLater()
+            status_code = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
+            response_data = reply.readAll().data()
+            text = response_data.decode(errors="replace")
+            result = json.dumps({"status": status_code, "text": text})
+            self.finish_ai(result, prompt)
+        finally:
+            reply.deleteLater()
 
     def finish_ai(self, result, prompt):
         toggle_button_state(self.go_button)
@@ -161,7 +196,11 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                 if result_elements:
                     QMessageBox.information(self, "", f'Found {result_elements} elements')
                 else:
-                    QMessageBox.warning(self, "", "Nothing was found, try to reformulate your query")
+                    QMessageBox.warning(
+                        self,
+                        "",
+                        "Nothing was found, try to reformulate your query",
+                    )
 
             elif status // 100 == 4:
                 QMessageBox.critical(self, "", f'Request error: {data}')
@@ -189,33 +228,45 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def on_upload_layers_finished(self):
         reply = self.sender()
-        if reply.error():
-            print(f"Error: {reply.errorString()}")
-            return
-
-        status_code = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
-        response_data = reply.readAll().data()
-
         try:
-            text = response_data.decode()
-        except UnicodeDecodeError:
-            text = ''
+            if reply.error():
+                error_text = reply.readAll().data().decode(errors="replace")
+                message = error_text or reply.errorString()
+                set_button_enabled(self.upload_button, True)
+                QMessageBox.critical(self, "Upload failed", message)
+                return
 
-        result = json.dumps({'status': status_code, 'text': text})
-        self.finish_upload(result)
-
-        reply.deleteLater()
+            status_code = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
+            response_data = reply.readAll().data()
+            text = response_data.decode(errors="replace")
+            result = json.dumps({"status": status_code, "text": text})
+            self.finish_upload(result)
+        finally:
+            reply.deleteLater()
 
     def process_result(self, response, request_type):
-        if response.status_code == 200:  # HTTP OK
-            json_response = response.json()
-            if request_type == 'subscription':
-                self.subscriptions_response = json_response
-            elif request_type == 'limits':
-                self.limits_response = json_response
+        if response.status_code != 200:
+            message = response.text or f"HTTP {response.status_code}"
+            QMessageBox.critical(self, "Account information failed", message)
+            return
 
-            if self.subscriptions_response is not None and self.limits_response is not None:
-                self.update_interface_with_restrictions_finish()
+        try:
+            json_response = response.json()
+        except ValueError as error:
+            QMessageBox.critical(
+                self,
+                "Account information failed",
+                f"Invalid server response: {error}",
+            )
+            return
+
+        if request_type == "subscription":
+            self.subscriptions_response = json_response
+        elif request_type == "limits":
+            self.limits_response = json_response
+
+        if self.subscriptions_response is not None and self.limits_response is not None:
+            self.update_interface_with_restrictions_finish()
 
     def get_current_subscription(self):
         api_url = f'{API_LINK}/user/current_subscription'
@@ -223,7 +274,11 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.token}"
         }
-        response = requests.get(api_url, headers=headers)
+        try:
+            response = requests.get(api_url, headers=headers, timeout=30)
+        except requests.RequestException as error:
+            QMessageBox.critical(self, "Subscription request failed", str(error))
+            return
         self.process_result(response, 'subscription')
 
     def get_current_limits(self):
@@ -232,25 +287,36 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.token}"
         }
-        response = requests.get(api_url, headers=headers)
+        try:
+            response = requests.get(api_url, headers=headers, timeout=30)
+        except requests.RequestException as error:
+            QMessageBox.critical(self, "Limits request failed", str(error))
+            return
         self.process_result(response, 'limits')
 
     def update_interface_with_restrictions_finish(self):
-        subscription_plan = self.subscriptions_response["current_subscription"]["subscription_plan_code"]
+        subscription = self.subscriptions_response.get("current_subscription")
+        if not subscription:
+            block_input_area(self, "subscription")
+            return
+
+        subscription_plan = subscription["subscription_plan_code"]
         if subscription_plan != "free":
             self.trial_label.setVisible(True)
 
         prompts_left = update_prompts_left_label(self, self.limits_response)
         update_days_label(self, self.subscriptions_response)
 
-        if (subscription_plan == "free" or subscription_plan == "trial") and prompts_left == 0:
+        if prompts_left == 0 and subscription_plan in {"free", "trial"}:
             block_input_area(self, "subscription")
-        elif subscription_plan == "individual" and prompts_left == 0:
+        elif prompts_left == 0:
             block_input_area(self, "prompts")
         else:
             self.prompt_field.setReadOnly(False)
             self.prompt_field.clear()
 
     def update_interface_with_restrictions_start(self):
+        self.subscriptions_response = None
+        self.limits_response = None
         self.get_current_subscription()
         self.get_current_limits()

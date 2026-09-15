@@ -213,7 +213,7 @@ padding: 10px;</string>
     <string notr="true">color: black</string>
    </property>
    <property name="text">
-    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;&lt;a href=&quot;https://aino.world/&quot;&gt;&lt;span style=&quot; font-size:14pt; color:#0b0604;&quot;&gt;Don't have an account? &lt;/span&gt;&lt;/a&gt;&lt;a href=&quot;https://beta.aino.world/auth&quot;&gt;&lt;span style=&quot; font-size:14pt; text-decoration: underline; color:#4580fe;&quot;&gt;Sign up&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;&lt;a href=&quot;https://aino.world/&quot;&gt;&lt;span style=&quot; font-size:14pt; color:#0b0604;&quot;&gt;Don't have an account? &lt;/span&gt;&lt;/a&gt;&lt;a href=&quot;https://app.aino.world/auth&quot;&gt;&lt;span style=&quot; font-size:14pt; text-decoration: underline; color:#4580fe;&quot;&gt;Sign up&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
    </property>
   </widget>
  </widget>

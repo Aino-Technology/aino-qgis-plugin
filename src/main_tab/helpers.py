@@ -1,10 +1,9 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from math import ceil
 
 from qgis.core import QgsProject, QgsVectorLayer, QgsWkbTypes
 from qgis.PyQt.QtWidgets import QCheckBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
-from zoneinfo import ZoneInfo
 
 
 def update_style(button):
@@ -28,46 +27,31 @@ def update_style(button):
 
 
 def toggle_button_state(button):
-    button.setEnabled(not button.isEnabled())
+    set_button_enabled(button, not button.isEnabled())
+
+
+def set_button_enabled(button, enabled):
+    button.setEnabled(enabled)
 
     update_style(button)
 
 
 def add_data(data, name):
     data_json = json.loads(data)
-    point_features = []
-    line_features = []
-    polygon_features = []
+    features_by_geometry = {}
 
     for feature in data_json["features"]:
-        geom_type = feature["geometry"]["type"]
-        if geom_type == "Point":
-            point_features.append(feature)
-        elif geom_type == "LineString":
-            line_features.append(feature)
-        elif geom_type == "Polygon":
-            polygon_features.append(feature)
+        geometry = feature.get("geometry") or {}
+        geometry_type = geometry.get("type")
+        if geometry_type:
+            features_by_geometry.setdefault(geometry_type, []).append(feature)
 
-    if point_features:
-        point_geojson = json.dumps(
-            {"type": "FeatureCollection", "features": point_features}
-        )
-        vector_layer = QgsVectorLayer(point_geojson, f"{name}_points", "ogr")
-        QgsProject.instance().addMapLayer(vector_layer)
-
-    if line_features:
-        line_geojson = json.dumps(
-            {"type": "FeatureCollection", "features": line_features}
-        )
-        vector_layer = QgsVectorLayer(line_geojson, f"{name}_lines", "ogr")
-        QgsProject.instance().addMapLayer(vector_layer)
-
-    if polygon_features:
-        polygon_geojson = json.dumps(
-            {"type": "FeatureCollection", "features": polygon_features}
-        )
-        vector_layer = QgsVectorLayer(polygon_geojson, f"{name}_polygons", "ogr")
-        QgsProject.instance().addMapLayer(vector_layer)
+    for geometry_type, features in features_by_geometry.items():
+        geometry_suffix = geometry_type.lower()
+        geojson = json.dumps({"type": "FeatureCollection", "features": features})
+        vector_layer = QgsVectorLayer(geojson, f"{name}_{geometry_suffix}", "ogr")
+        if vector_layer.isValid():
+            QgsProject.instance().addMapLayer(vector_layer)
 
 
 def update_labels(api_response, main_ui):
@@ -139,15 +123,13 @@ def get_selected_options(main_ui):
 def update_days_label(main_ui, api_response):
     expiration_datetime = api_response["current_subscription"]["expiration_date"]
     if expiration_datetime:
-        expiration_datetime = datetime.strptime(
-            expiration_datetime, "%Y-%m-%dT%H:%M:%S.%f%z"
+        expiration_datetime = datetime.fromisoformat(
+            expiration_datetime.replace("Z", "+00:00")
         )
-
         start_datetime = api_response["current_subscription"]["start_date"]
-        start_datetime = datetime.strptime(start_datetime, "%Y-%m-%dT%H:%M:%S.%f%z")
+        start_datetime = datetime.fromisoformat(start_datetime.replace("Z", "+00:00"))
 
-        current_datetime = datetime.utcnow()
-        current_datetime = current_datetime.replace(tzinfo=ZoneInfo("UTC"))
+        current_datetime = datetime.now(timezone.utc)
 
         delta_remaining = expiration_datetime - current_datetime
         delta_start_datetime = expiration_datetime - start_datetime
@@ -172,6 +154,10 @@ def update_prompts_left_label(main_ui, api_response):
     limits = api_response["limits"]
     for limit in limits:
         if limit["name"] == "ai_query":
+            if limit["type"] == "unlimited":
+                main_ui.prompts_label.setText("Unlimited prompts")
+                main_ui.prompts_label.setStyleSheet("")
+                return None
             total_amount = limit["total_amount"]
             left_amount = limit["left_amount"]
     if total_amount is not None and left_amount is not None:
@@ -186,12 +172,12 @@ def update_prompts_left_label(main_ui, api_response):
 
 
 def block_input_area(main_ui, reason):
-    link = "<a href='http://Beta.Aino.world'>Beta.Aino.world</a>"
+    link = "<a href='https://app.aino.world'>app.aino.world</a>"
     message = None
     if reason == "subscription":
         message = f"To get more prompts upgrade your subscription at {link}"
     elif reason == "prompts":
-        message = "To get more propts please contact us via hello@aino.world"
+        message = "To get more prompts please contact us via hello@aino.world"
     if message:
         main_ui.prompt_field.setReadOnly(True)
         main_ui.prompt_field.clear()
