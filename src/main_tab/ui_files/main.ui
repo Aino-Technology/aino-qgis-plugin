@@ -20,7 +20,7 @@
    </size>
   </property>
   <property name="windowTitle">
-   <string>Aino</string>
+   <string>Aino AI</string>
   </property>
   <property name="styleSheet">
    <string notr="true">QTabWidget {
@@ -131,7 +131,7 @@ QMessageBox QPushButton:focus {
   </property>
   <widget class="QWidget" name="main_tab">
    <attribute name="title">
-    <string>Aino</string>
+    <string>Aino AI</string>
    </attribute>
    <widget class="QTextEdit" name="prompt_field">
     <property name="geometry">
@@ -443,7 +443,7 @@ padding: 2px 0;
   </widget>
   <widget class="QWidget" name="upload_tab">
    <attribute name="title">
-    <string>Upload</string>
+    <string>Import from Aino</string>
    </attribute>
    <widget class="QLabel" name="label_2">
     <property name="geometry">

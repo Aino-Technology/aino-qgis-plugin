@@ -52,6 +52,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.main_ui = osm_parser
         self.first_step = True
         self.setupUi(self)
+        self.setup_account_controls()
 
         self.go_button.clicked.connect(self.start_osm_thread)
         self.prompt_field.textChanged.connect(self.on_prompt_changed)
@@ -60,6 +61,52 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.limits_response = None
         self.subscriptions_response = None
         self.trial_label.setVisible(False)
+
+    def setup_account_controls(self):
+        """Add the signed-in account and sign-out action to the tab bar."""
+        self.account_widget = QtWidgets.QWidget(self)
+        self.account_widget.setObjectName("account_widget")
+        account_layout = QtWidgets.QHBoxLayout(self.account_widget)
+        account_layout.setContentsMargins(8, 4, 8, 4)
+        account_layout.setSpacing(8)
+
+        self.account_email_label = QtWidgets.QLabel("Signed in")
+        self.account_email_label.setObjectName("account_email_label")
+        self.account_email_label.setMaximumWidth(175)
+        self.account_email_label.setWordWrap(False)
+
+        self.sign_out_button = QtWidgets.QPushButton("Sign out")
+        self.sign_out_button.setObjectName("sign_out_button")
+        self.sign_out_button.setCursor(Qt.PointingHandCursor)
+        self.sign_out_button.setToolTip("Sign out of this Aino account")
+        self.sign_out_button.clicked.connect(self.sign_out)
+
+        account_layout.addWidget(self.account_email_label)
+        account_layout.addWidget(self.sign_out_button)
+        self.account_widget.setStyleSheet(
+            "QLabel { color: #667085; font-size: 11px; }"
+            "QPushButton { color: #B42318; background: transparent; "
+            "border: 1px solid #E5E7EB; border-radius: 8px; padding: 4px 8px; }"
+            "QPushButton:hover { color: #8A1C13; background: #FEF3F2; "
+            "border-color: #FDA29B; }"
+            "QPushButton:focus { border: 2px solid #315EFB; }"
+        )
+        self.setCornerWidget(self.account_widget, Qt.TopRightCorner)
+
+    def set_account_email(self, email):
+        """Show the signed-in email and keep the full value available on hover."""
+        account_email = (email or "").strip() or "Signed in"
+        self.account_email_label.setText(account_email)
+        self.account_email_label.setToolTip(account_email)
+
+    def sign_out(self):
+        """Clear the current session and return to the login dialog."""
+        self.hide()
+        self.token = None
+        self.main_ui.bearer_token = None
+        self.main_ui.user_email = None
+        self.main_ui.user_logged_in = False
+        self.main_ui.run()
 
     def set_request_status(self, message, state="ready"):
         colors = {

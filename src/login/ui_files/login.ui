@@ -14,13 +14,18 @@
    <string>Login</string>
   </property>
   <property name="styleSheet">
-   <string notr="true">background-color: white</string>
+   <string notr="true">background-color: #FFFFFF;
+color: #111827;
+QLabel {
+color: #111827;
+background-color: transparent;
+}</string>
   </property>
   <widget class="QPushButton" name="process_login">
    <property name="geometry">
     <rect>
      <x>30</x>
-     <y>460</y>
+     <y>420</y>
      <width>421</width>
      <height>41</height>
     </rect>
@@ -83,19 +88,32 @@ border-radius: 10px;</string>
    <property name="geometry">
     <rect>
      <x>30</x>
-     <y>300</y>
+     <y>280</y>
      <width>421</width>
      <height>41</height>
     </rect>
    </property>
    <property name="styleSheet">
-    <string notr="true">background-color: white;
-color: black;
-border-style: outset;
+    <string notr="true">QLineEdit {
+background-color: #FFFFFF;
+color: #111827;
+border: 1px solid #A3AAB8;
 border-radius: 10px;
-border-color: grey;
-border-width: 1px;
-padding: 10px;</string>
+padding: 10px;
+selection-background-color: #315EFB;
+selection-color: #FFFFFF;
+}
+QLineEdit:hover {
+border-color: #6B7280;
+}
+QLineEdit:focus {
+border: 2px solid #315EFB;
+border-radius: 10px;
+padding: 9px;
+}</string>
+   </property>
+   <property name="focusPolicy">
+    <enum>Qt::StrongFocus</enum>
    </property>
    <property name="placeholderText">
     <string>Your email</string>
@@ -105,19 +123,32 @@ padding: 10px;</string>
    <property name="geometry">
     <rect>
      <x>30</x>
-     <y>390</y>
+     <y>350</y>
      <width>421</width>
      <height>41</height>
     </rect>
    </property>
    <property name="styleSheet">
-    <string notr="true">background-color: white;
-color: black;
-border-style: outset;
+    <string notr="true">QLineEdit {
+background-color: #FFFFFF;
+color: #111827;
+border: 1px solid #A3AAB8;
 border-radius: 10px;
-border-color: grey;
-border-width: 1px;
-padding: 10px;</string>
+padding: 10px;
+selection-background-color: #315EFB;
+selection-color: #FFFFFF;
+}
+QLineEdit:hover {
+border-color: #6B7280;
+}
+QLineEdit:focus {
+border: 2px solid #315EFB;
+border-radius: 10px;
+padding: 9px;
+}</string>
+   </property>
+   <property name="focusPolicy">
+    <enum>Qt::StrongFocus</enum>
    </property>
    <property name="echoMode">
     <enum>QLineEdit::Password</enum>
@@ -139,7 +170,7 @@ padding: 10px;</string>
     <enum>Qt::LeftToRight</enum>
    </property>
    <property name="text">
-    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;&lt;span style=&quot; font-size:14pt;&quot;&gt;Log in with your Aino account,&lt;br/&gt;if you don't have one, we will send you the sign up page&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;&lt;span style=&quot; font-size:14pt;&quot;&gt;Log in with your Aino account&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
    </property>
   </widget>
   <widget class="QLabel" name="label_2">
@@ -159,7 +190,7 @@ padding: 10px;</string>
    <property name="geometry">
     <rect>
      <x>30</x>
-     <y>570</y>
+     <y>530</y>
      <width>431</width>
      <height>21</height>
     </rect>
@@ -172,7 +203,7 @@ padding: 10px;</string>
    <property name="geometry">
     <rect>
      <x>0</x>
-     <y>600</y>
+     <y>560</y>
      <width>481</width>
      <height>20</height>
     </rect>
@@ -184,6 +215,9 @@ padding: 10px;</string>
    </property>
    <property name="cursor">
     <cursorShape>PointingHandCursor</cursorShape>
+   </property>
+   <property name="textInteractionFlags">
+    <set>Qt::LinksAccessibleByMouse</set>
    </property>
    <property name="styleSheet">
     <string notr="true">color: black</string>
@@ -196,8 +230,8 @@ padding: 10px;</string>
    <property name="geometry">
     <rect>
      <x>0</x>
-     <y>520</y>
-     <width>481</width>
+     <y>480</y>
+     <width>280</width>
      <height>20</height>
     </rect>
    </property>
@@ -206,14 +240,45 @@ padding: 10px;</string>
      <pointsize>12</pointsize>
     </font>
    </property>
-   <property name="cursor">
-    <cursorShape>PointingHandCursor</cursorShape>
-   </property>
    <property name="styleSheet">
     <string notr="true">color: black</string>
    </property>
    <property name="text">
-    <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;&lt;span style=&quot; font-size:14pt; color:#0b0604;&quot;&gt;Don't have an account? &lt;/span&gt;&lt;a href=&quot;https://app.aino.world/auth&quot;&gt;&lt;span style=&quot; font-size:14pt; text-decoration: underline; color:#4580fe;&quot;&gt;Sign up&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+    <string>Don't have an account?</string>
+   </property>
+   <property name="alignment">
+    <set>Qt::AlignRight|Qt::AlignVCenter</set>
+   </property>
+  </widget>
+  <widget class="QPushButton" name="signup_button">
+   <property name="geometry">
+    <rect>
+     <x>285</x>
+     <y>480</y>
+     <width>80</width>
+     <height>20</height>
+    </rect>
+   </property>
+   <property name="font">
+    <font>
+     <pointsize>12</pointsize>
+     <underline>true</underline>
+    </font>
+   </property>
+   <property name="cursor">
+    <cursorShape>PointingHandCursor</cursorShape>
+   </property>
+   <property name="flat">
+    <bool>true</bool>
+   </property>
+   <property name="styleSheet">
+    <string notr="true">color: #4580fe;
+background-color: transparent;
+border: none;
+padding: 0;</string>
+   </property>
+   <property name="text">
+    <string>Sign up</string>
    </property>
   </widget>
  </widget>

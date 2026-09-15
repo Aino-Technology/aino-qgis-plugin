@@ -13,7 +13,7 @@ plugin_dir = os.path.dirname(__file__)
 if plugin_dir not in sys.path:
     sys.path.insert(0, plugin_dir)
 
-from src.login.start_tab import OsmParserDialogStart
+from src.login.login_tab import LoginDialog
 from src.main_tab import OsmParserDialogMain
 from src.login import exec_dialog
 
@@ -56,6 +56,7 @@ class OsmParser:
         self.first_start = None
         self.user_logged_in = False
         self.bearer_token = None
+        self.user_email = None
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -174,19 +175,17 @@ class OsmParser:
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start:
             self.first_start = False
-            self.start_dlg = OsmParserDialogStart(osm_parser=self)
             self.main_dlg = OsmParserDialogMain(osm_parser=self)
 
-        # show the dialog
         if not self.user_logged_in:
-            self.start_dlg.show()
-            # Run the dialog event loop
-            result = exec_dialog(self.start_dlg)
+            login_dialog = LoginDialog(self)
+            result = exec_dialog(login_dialog)
 
             if result:
+                self.user_logged_in = True
                 self.main_dlg.token = self.bearer_token
+                self.main_dlg.set_account_email(self.user_email)
                 self.main_dlg.update_interface_with_restrictions_start()
-                self.start_dlg.hide()
                 self.main_dlg.show()
 
         else:
