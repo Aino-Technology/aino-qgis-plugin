@@ -3,6 +3,7 @@ import os
 from qgis.PyQt import uic
 from qgis.PyQt import QtWidgets
 from .login_tab import LoginDialog
+from . import exec_dialog
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 FORM_CLASS_start, _ = uic.loadUiType(os.path.join(
@@ -32,7 +33,7 @@ class SignupDialog(QtWidgets.QDialog):
     def login(self):
         self.hide()
         login_dialog = LoginDialog(self.main_ui)
-        if login_dialog.exec_():
+        if exec_dialog(login_dialog):
             self.main_ui.user_logged_in = True
             login_dialog.hide()
             self.accept()

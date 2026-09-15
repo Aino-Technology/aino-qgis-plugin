@@ -15,6 +15,7 @@ if plugin_dir not in sys.path:
 
 from src.login.start_tab import OsmParserDialogStart
 from src.main_tab import OsmParserDialogMain
+from src.login import exec_dialog
 
 
 class OsmParser:
@@ -180,7 +181,7 @@ class OsmParser:
         if not self.user_logged_in:
             self.start_dlg.show()
             # Run the dialog event loop
-            result = self.start_dlg.exec_()
+            result = exec_dialog(self.start_dlg)
 
             if result:
                 self.main_dlg.token = self.bearer_token

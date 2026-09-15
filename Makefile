@@ -61,7 +61,7 @@ PY_FILES = \
 	src/main_tab/__init__.py \
 	src/main_tab/helpers.py
 
-EXTRAS = metadata.txt icon.svg Welcome.png
+EXTRAS = metadata.txt icon.svg Welcome.svg
 
 COMPILED_RESOURCE_FILES = resources.py
 

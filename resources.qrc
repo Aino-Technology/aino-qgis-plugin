@@ -3,6 +3,6 @@
         <file>icon.svg</file>
     </qresource>
     <qresource prefix="/plugins/osm_parser/images" >
-        <file>Welcome.png</file>
+        <file>Welcome.svg</file>
     </qresource>
 </RCC>

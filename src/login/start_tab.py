@@ -5,6 +5,7 @@ from qgis.PyQt import uic
 from qgis.PyQt import QtWidgets
 from .login_tab import LoginDialog
 from .signup_tab import SignupDialog
+from . import exec_dialog
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 FORM_CLASS_start, _ = uic.loadUiType(os.path.join(
@@ -35,7 +36,7 @@ class OsmParserDialogStart(QtWidgets.QDialog, FORM_CLASS_start):
     def login(self):
         self.hide()
         login_dialog = LoginDialog(self.main_ui)
-        if login_dialog.exec_():
+        if exec_dialog(login_dialog):
             self.main_ui.user_logged_in = True
             login_dialog.hide()
             self.accept()
@@ -45,7 +46,7 @@ class OsmParserDialogStart(QtWidgets.QDialog, FORM_CLASS_start):
         auth_url = 'https://app.aino.world/auth'
         webbrowser.open(auth_url, new=0, autoraise=True)
         signup_dialog = SignupDialog(self.main_ui)
-        if signup_dialog.exec_():
+        if exec_dialog(signup_dialog):
             self.main_ui.user_logged_in = True
             signup_dialog.hide()
             self.accept()
