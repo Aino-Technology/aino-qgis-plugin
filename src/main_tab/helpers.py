@@ -151,22 +151,37 @@ def update_days_label(main_ui, api_response):
 def update_prompts_left_label(main_ui, api_response):
     total_amount = None
     left_amount = None
+    limit_name = "agent_analysis"
     limits = api_response["limits"]
     for limit in limits:
-        if limit["name"] == "ai_query":
+        if limit["name"] == limit_name:
             if limit["type"] == "unlimited":
-                main_ui.prompts_label.setText("Unlimited prompts")
+                main_ui.prompts_label.setText("Unlimited analysis requests")
                 main_ui.prompts_label.setStyleSheet("")
                 return None
             total_amount = limit["total_amount"]
             left_amount = limit["left_amount"]
+
+    if total_amount is None or left_amount is None:
+        limit_name = "ai_query"
+        for limit in limits:
+            if limit["name"] == limit_name:
+                if limit["type"] == "unlimited":
+                    main_ui.prompts_label.setText("Unlimited prompts")
+                    main_ui.prompts_label.setStyleSheet("")
+                    return None
+                total_amount = limit["total_amount"]
+                left_amount = limit["left_amount"]
+                break
+
     if total_amount is not None and left_amount is not None:
+        label = "analyses" if limit_name == "agent_analysis" else "prompts"
         if left_amount > 0:
-            main_ui.prompts_label.setText(f"{left_amount}/{total_amount} prompts")
+            main_ui.prompts_label.setText(f"{left_amount}/{total_amount} {label}")
             main_ui.prompts_label.setStyleSheet("")
 
         else:
-            main_ui.prompts_label.setText(f"{left_amount}/{total_amount} prompts")
+            main_ui.prompts_label.setText(f"{left_amount}/{total_amount} {label}")
             main_ui.prompts_label.setStyleSheet("color: red;")
     return left_amount
 

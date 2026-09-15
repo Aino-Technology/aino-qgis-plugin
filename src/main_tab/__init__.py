@@ -54,11 +54,29 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.setupUi(self)
 
         self.go_button.clicked.connect(self.start_osm_thread)
+        self.prompt_field.textChanged.connect(self.on_prompt_changed)
         self.upload_button.clicked.connect(self.upload_process)
         self.currentChanged.connect(lambda _: update_scroll_area(self))
         self.limits_response = None
         self.subscriptions_response = None
         self.trial_label.setVisible(False)
+
+    def set_request_status(self, message, state="ready"):
+        colors = {
+            "ready": "#667085",
+            "working": "#315EFB",
+            "success": "#157F3D",
+            "error": "#B42318",
+        }
+        self.request_status_label.setText(message)
+        self.request_status_label.setStyleSheet(
+            f"color: {colors.get(state, colors['ready'])}; padding: 2px 0;"
+        )
+        self.go_button.setText("Working…" if state == "working" else "GO")
+
+    def on_prompt_changed(self):
+        if self.go_button.isEnabled():
+            self.set_request_status("Ready — press GO to create a layer.")
 
     def upload_next(self):
         project_link = self.project_link_text.text()
@@ -146,13 +164,61 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
     def start_osm_thread(self):
         prompt = self.prompt_field.toPlainText()
 
+        if not prompt.strip():
+            self.set_request_status("Enter a map request first.", "error")
+            QMessageBox.warning(
+                self,
+                "Add a map request",
+                "Describe the places or features you want to add to QGIS.",
+            )
+            return
+
         self.send_osm_request(prompt)
 
+    @staticmethod
+    def format_request_error(response_text, status_code=None):
+        """Turn an API error payload into a short, useful message."""
+        try:
+            payload = json.loads(response_text)
+        except (TypeError, ValueError):
+            payload = {}
+
+        error_message = payload.get("error_message") or payload.get("message")
+        if error_message:
+            return str(error_message)
+
+        error = payload.get("error")
+        if error:
+            return str(error)
+
+        if status_code:
+            return f"HTTP {status_code}"
+
+        return "The request could not be completed. Please try again."
+
+    @staticmethod
+    def get_status_code(reply):
+        """Read the HTTP status attribute on both Qt 5 and Qt 6."""
+        legacy_attribute = getattr(QNetworkRequest, "HttpStatusCodeAttribute", None)
+        if legacy_attribute is not None:
+            status_code = reply.attribute(legacy_attribute)
+        else:
+            status_code = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute)
+
+        try:
+            return int(status_code)
+        except (TypeError, ValueError):
+            return None
+
     def send_osm_request(self, prompt):
-        toggle_button_state(self.go_button)
+        set_button_enabled(self.go_button, False)
+        self.set_request_status(
+            f"Working… looking up {prompt.strip()!r} in OpenStreetMap.",
+            "working",
+        )
         api_url = f'{API_LINK}/public/ai_query/parser'
         request = QNetworkRequest(QUrl(api_url))
-        request.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
+        request.setRawHeader(b"Content-Type", b"application/json")
         request.setRawHeader(b"Authorization", f"Bearer {self.token}".encode())
 
         data = QByteArray(json.dumps({'prompt': prompt}).encode())
@@ -163,23 +229,31 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
     def on_osm_reply_finished(self, prompt):
         reply = self.sender()
         try:
-            if reply.error():
-                error_text = reply.readAll().data().decode(errors="replace")
-                message = error_text or reply.errorString()
+            status_code = self.get_status_code(reply)
+            response_data = reply.readAll().data()
+            text = response_data.decode(errors="replace")
+
+            if status_code is not None and 200 <= status_code < 300:
+                result = json.dumps({"status": status_code, "text": text})
+                self.finish_ai(result, prompt)
+                return
+
+            if reply.error() or status_code is not None:
+                message = self.format_request_error(text, status_code)
+                if not text:
+                    message = reply.errorString()
                 set_button_enabled(self.go_button, True)
+                self.set_request_status(message, "error")
                 QMessageBox.critical(self, "Request failed", message)
                 return
 
-            status_code = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
-            response_data = reply.readAll().data()
-            text = response_data.decode(errors="replace")
             result = json.dumps({"status": status_code, "text": text})
             self.finish_ai(result, prompt)
         finally:
             reply.deleteLater()
 
     def finish_ai(self, result, prompt):
-        toggle_button_state(self.go_button)
+        set_button_enabled(self.go_button, True)
 
         try:
             result_json = json.loads(result)
@@ -189,10 +263,20 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
                 data_dict = json.loads(data)
 
-                result_elements = len(data_dict['features'])
+                result_elements = len(data_dict.get('features', []))
                 add_data(data, prompt)
                 self.update_interface_with_restrictions_start()
                 update_scroll_area(self)
+                if result_elements:
+                    self.set_request_status(
+                        f"Added {result_elements} features to QGIS.",
+                        "success",
+                    )
+                else:
+                    self.set_request_status(
+                        "No matching features found. Try a more specific request.",
+                        "error",
+                    )
                 if result_elements:
                     QMessageBox.information(self, "", f'Found {result_elements} elements')
                 else:
@@ -203,18 +287,23 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                     )
 
             elif status // 100 == 4:
-                QMessageBox.critical(self, "", f'Request error: {data}')
+                message = self.format_request_error(data, status)
+                self.set_request_status(message, "error")
+                QMessageBox.critical(self, "Request failed", message)
             elif status // 100 == 5:
-                QMessageBox.critical(self, "", f'Response error: {data}')
+                message = self.format_request_error(data, status)
+                self.set_request_status(message, "error")
+                QMessageBox.critical(self, "Service error", message)
 
         except Exception as e:
+            self.set_request_status(f"Request failed: {e}", "error")
             QMessageBox.critical(self, "", f"An error occurred: {e}, try again")
             pass
 
     def upload_layers(self, features_with_names, project_id):
         api_url = f'{API_LINK}/public/project/files/bulk_add_geojson'
         request = QNetworkRequest(QUrl(api_url))
-        request.setHeader(QNetworkRequest.ContentTypeHeader, "application/json")
+        request.setRawHeader(b"Content-Type", b"application/json")
         request.setRawHeader(b"Authorization", f"Bearer {self.token}".encode())
 
         data = {
@@ -236,7 +325,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                 QMessageBox.critical(self, "Upload failed", message)
                 return
 
-            status_code = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
+            status_code = self.get_status_code(reply)
             response_data = reply.readAll().data()
             text = response_data.decode(errors="replace")
             result = json.dumps({"status": status_code, "text": text})

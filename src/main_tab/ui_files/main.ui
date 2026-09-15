@@ -6,12 +6,12 @@
    <bool>true</bool>
   </property>
   <property name="geometry">
-   <rect>
-    <x>0</x>
-    <y>0</y>
-    <width>550</width>
-    <height>401</height>
-   </rect>
+    <rect>
+     <x>0</x>
+     <y>0</y>
+     <width>550</width>
+     <height>435</height>
+    </rect>
   </property>
   <property name="maximumSize">
    <size>
@@ -23,21 +23,104 @@
    <string>Aino</string>
   </property>
   <property name="styleSheet">
-   <string notr="true">background-color: white</string>
+   <string notr="true">QTabWidget {
+ background-color: #FFFFFF;
+ color: #111827;
+}
+QTabWidget::pane {
+ background-color: #FFFFFF;
+ border: 1px solid #E5E7EB;
+ border-radius: 12px;
+ top: -1px;
+}
+QTabBar::tab {
+ background-color: #F3F4F6;
+ color: #667085;
+ border: 1px solid #E5E7EB;
+ border-bottom: none;
+ border-top-left-radius: 10px;
+ border-top-right-radius: 10px;
+ padding: 8px 18px;
+ min-width: 66px;
+}
+QTabBar::tab:selected {
+ background-color: #111827;
+ color: #FFFFFF;
+}
+QTabBar::tab:hover:!selected {
+ background-color: #E5E7EB;
+ color: #111827;
+}
+QLabel {
+ color: #111827;
+}
+QTextEdit {
+ background-color: #F7F9FC;
+ color: #111827;
+ border: 1px solid #D8DFEA;
+ border-radius: 12px;
+ padding: 12px;
+ selection-background-color: #C7D7FE;
+}
+QTextEdit:focus {
+ border: 2px solid #315EFB;
+}
+QLineEdit {
+ background-color: #FFFFFF;
+ color: #111827;
+ border: 1px solid #D8DFEA;
+ border-radius: 10px;
+ padding: 10px;
+}
+QLineEdit:focus {
+ border: 2px solid #315EFB;
+}
+QCheckBox {
+ color: #111827;
+}
+QScrollArea {
+ border: 1px solid #E5E7EB;
+ border-radius: 10px;
+}
+QMessageBox {
+ background-color: #FFFFFF;
+ color: #111827;
+ border: 1px solid #D8DFEA;
+}
+QMessageBox QLabel {
+ background-color: transparent;
+ color: #111827;
+}
+QMessageBox QPushButton {
+ background-color: #111827;
+ color: #FFFFFF;
+ border: 1px solid #111827;
+ border-radius: 8px;
+ min-width: 72px;
+ padding: 6px 16px;
+}
+QMessageBox QPushButton:hover {
+ background-color: #315EFB;
+ border-color: #315EFB;
+}
+QMessageBox QPushButton:focus {
+ border: 2px solid #315EFB;
+}
+</string>
   </property>
   <property name="tabPosition">
    <enum>QTabWidget::North</enum>
   </property>
   <property name="tabShape">
-   <enum>QTabWidget::Triangular</enum>
+   <enum>QTabWidget::Rounded</enum>
   </property>
   <property name="currentIndex">
    <number>0</number>
   </property>
   <property name="iconSize">
    <size>
-    <width>138</width>
-    <height>58</height>
+    <width>16</width>
+    <height>16</height>
    </size>
   </property>
   <property name="elideMode">
@@ -59,17 +142,17 @@
       <height>141</height>
      </rect>
     </property>
-    <property name="styleSheet">
-     <string notr="true">background-color: rgb(240, 244,251);
-border-style: outset;
-border-radius: 10px;
-border-color: rgb(221,229,240);
-border-wight: 1px;
-padding: 10 px;
-padding-left: 10 px
-
+   <property name="styleSheet">
+     <string notr="true">background-color: #F7F9FC;
+color: #111827;
+border: 1px solid #D8DFEA;
+border-radius: 12px;
+padding: 12px;
 </string>
-    </property>
+   </property>
+   <property name="placeholderText">
+    <string>Try: parks in Berlin, fountains in Barcelona…</string>
+   </property>
    </widget>
    <widget class="QPushButton" name="go_button">
     <property name="enabled">
@@ -258,17 +341,41 @@ padding-left: 10 px
     <property name="cursor">
      <cursorShape>PointingHandCursor</cursorShape>
     </property>
-    <property name="styleSheet">
-     <string notr="true">background-color: black;
-color: white;
+   <property name="styleSheet">
+     <string notr="true">background-color: #111827;
+color: #FFFFFF;
+border: none;
 border-radius: 10px;
+font-weight: 600;
+padding: 8px 16px;
+</string>
+    </property>
+   <property name="text">
+     <string>GO</string>
+   </property>
+   <property name="default">
+    <bool>false</bool>
+   </property>
+  </widget>
+   <widget class="QLabel" name="request_status_label">
+    <property name="geometry">
+     <rect>
+      <x>20</x>
+      <y>350</y>
+      <width>508</width>
+      <height>26</height>
+     </rect>
+    </property>
+    <property name="styleSheet">
+     <string notr="true">color: #667085;
+padding: 2px 0;
 </string>
     </property>
     <property name="text">
-     <string>GO</string>
+     <string>Ready — enter a request to create a layer.</string>
     </property>
-    <property name="default">
-     <bool>false</bool>
+    <property name="wordWrap">
+     <bool>true</bool>
     </property>
    </widget>
    <widget class="QLabel" name="label">
@@ -288,7 +395,7 @@ border-radius: 10px;
      </font>
     </property>
     <property name="text">
-     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Ask data questions in natural language.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Ask Aino for map data&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
     </property>
    </widget>
    <widget class="QLabel" name="label_3">
@@ -301,7 +408,7 @@ border-radius: 10px;
      </rect>
     </property>
     <property name="text">
-     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Type any query like &amp;quot;trees in Paris&amp;quot; or &amp;quot;fountains in Barcelona&amp;quot;, then press &amp;quot;GO&amp;quot;. &lt;br/&gt;Aino will generate a new layer with the data from OSM.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Describe the places or features you want to add to QGIS.&lt;br/&gt;For example: &amp;quot;parks in Berlin&amp;quot;.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
     </property>
    </widget>
    <widget class="QLabel" name="prompts_label">
@@ -315,6 +422,9 @@ border-radius: 10px;
     </property>
     <property name="text">
      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;right&quot;&gt;&lt;span style=&quot; color:#595959;&quot;&gt;0/100 prompts left&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+    </property>
+    <property name="styleSheet">
+     <string notr="true">color: #667085;</string>
     </property>
    </widget>
    <widget class="QLabel" name="trial_label">
