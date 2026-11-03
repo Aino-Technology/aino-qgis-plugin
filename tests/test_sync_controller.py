@@ -620,3 +620,216 @@ def test_malformed_success_does_not_lose_saved_link_intent(sync, response):
     assert errors
     controller.restore(project)
     assert api.calls[-1][2] == intent
+
+
+@pytest.mark.parametrize("extension", ["qgs", "qgz"])
+def test_first_sync_named_project_warns_until_identity_is_saved(
+    sync, tmp_path, extension, qgis_app
+):
+    controller, api, journal, project = sync
+    filename = tmp_path / f"already-saved.{extension}"
+    project.setFileName(str(filename))
+    assert project.write()
+    qgis_app.processEvents()
+    notices = []
+    controller.notice.connect(notices.append)
+    controller.prepare(project, [], None)
+    identity = project_identity(project)
+    intent = api.calls[-1][2]
+    assert notices and "save" in notices[-1].lower()
+    before = QgsProject()
+    try:
+        assert before.read(str(filename))
+        assert project_identity(before, create=False) is None
+        assert journal.load(identity, "account-a")["sync"]["link_intent"] == intent
+    finally:
+        sip.delete(before)
+    assert project.write()
+    qgis_app.processEvents()
+    assert notices[-1] == ""
+    controller.close()
+    restored = QgsProject()
+    resumed = SyncController(api, journal=journal)
+    recovered_notices = []
+    resumed.notice.connect(recovered_notices.append)
+    try:
+        assert restored.read(str(filename))
+        restored.setTitle("Unrelated unsaved title")
+        assert restored.isDirty()
+        resumed.restore(restored)
+        assert project_identity(restored) == identity
+        assert api.calls[-1][2] == intent
+        assert recovered_notices[-1] == ""
+    finally:
+        resumed.close()
+        sip.delete(resumed)
+        sip.delete(restored)
+
+
+def test_detach_notice_tracks_successful_save_as_not_filename_or_failed_write(
+    sync, tmp_path, qgis_app
+):
+    controller, api, journal, project = sync
+    controller.prepare(project, [], None)
+    old = project_identity(project)
+    original = tmp_path / "original.qgz"
+    project.setFileName(str(original))
+    assert project.write()
+    qgis_app.processEvents()
+    notices = []
+    controller.notice.connect(notices.append)
+    controller.detach(project)
+    replacement = project_identity(project)
+    assert replacement != old
+    assert notices and "save" in notices[-1].lower()
+    before = QgsProject()
+    try:
+        assert before.read(str(original))
+        assert project_identity(before) == old
+    finally:
+        sip.delete(before)
+    project.setFileName(str(tmp_path / "missing-directory" / "failure.qgz"))
+    assert not project.write()
+    qgis_app.processEvents()
+    assert "save" in notices[-1].lower()
+    target = tmp_path / "replacement.qgz"
+    project.setFileName(str(target))
+    assert "save" in notices[-1].lower()
+    assert project.write()
+    qgis_app.processEvents()
+    assert notices[-1] == ""
+    after = QgsProject()
+    try:
+        assert after.read(str(target))
+        assert project_identity(after) == replacement
+    finally:
+        sip.delete(after)
+    assert journal.load(old, "account-a") is not None
+
+
+def test_unsaved_identity_survives_controller_recreation_without_false_confirmation(
+    sync, tmp_path, qgis_app
+):
+    controller, api, journal, project = sync
+    filename = tmp_path / "saved.qgz"
+    project.setFileName(str(filename))
+    assert project.write()
+    qgis_app.processEvents()
+    controller.prepare(project, [], None)
+    identity = project_identity(project)
+    controller.close()
+    resumed = SyncController(api, journal=journal)
+    notices = []
+    resumed.notice.connect(notices.append)
+    try:
+        resumed.restore(project)
+        assert project_identity(project) == identity
+        assert notices and "save" in notices[-1].lower()
+        assert project.write()
+        qgis_app.processEvents()
+        assert notices[-1] == ""
+        notices.clear()
+        resumed.close()
+        project.setTitle("No controller callback after close")
+        assert project.write()
+        qgis_app.processEvents()
+        assert notices == []
+    finally:
+        resumed.close()
+        sip.delete(resumed)
+
+
+def test_identity_tracker_owned_once_and_follows_project_clear_read_and_destruction(
+    qgis_app, tmp_path
+):
+    from src.project_sync.recovery import (
+        ProjectIdentityPersistence,
+        project_persistence,
+        replace_project_identity,
+    )
+
+    project = QgsProject()
+    tracker = project_persistence(project)
+    try:
+        identity = project_identity(project)
+        target = tmp_path / "tracked.qgz"
+        project.setFileName(str(target))
+        assert tracker.notice
+        assert project.write()
+        qgis_app.processEvents()
+        assert tracker.notice == ""
+        assert tracker is project_persistence(project)
+        assert len(project.findChildren(ProjectIdentityPersistence)) == 1
+        replace_project_identity(project)
+        assert tracker.notice
+        project.clear()
+        assert tracker.notice == ""
+        assert project_identity(project, create=False) is None
+        assert project.read(str(target))
+        assert project_identity(project) == identity
+        assert tracker is project_persistence(project)
+        assert tracker.notice == ""
+        project.setTitle("Unsaved unrelated edit")
+        assert project.isDirty() and tracker.notice == ""
+    finally:
+        sip.delete(project)
+    assert sip.isdeleted(tracker)
+
+
+def test_successful_save_compares_written_uuid_when_identity_changes_during_serialization(
+    sync, tmp_path, qgis_app
+):
+    from src.project_sync.recovery import replace_project_identity
+
+    controller, api, journal, project = sync
+    notices = []
+    controller.notice.connect(notices.append)
+    controller.prepare(project, [], None)
+    filename = tmp_path / "write-order.qgz"
+    project.setFileName(str(filename))
+
+    def changed_during_write(document):
+        replace_project_identity(project)
+
+    project.writeProject.connect(changed_during_write)
+    assert project.write()
+    qgis_app.processEvents()
+    project.writeProject.disconnect(changed_during_write)
+    stored = QgsProject()
+    try:
+        assert stored.read(str(filename))
+        actual_saved = project_identity(stored, create=False)
+        assert bool(notices[-1]) == (actual_saved != project_identity(project))
+    finally:
+        sip.delete(stored)
+    assert project.write()
+    qgis_app.processEvents()
+    assert notices[-1] == ""
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "missing.qgz",
+        "invalid.qgz",
+        "unrecognized.project",
+        "https://example.invalid/project.qgz",
+    ],
+)
+def test_unverified_project_metadata_never_confirms_uuid(qgis_app, tmp_path, filename):
+    from src.project_sync.recovery import (
+        PROJECT_SCOPE,
+        PROJECT_KEY,
+        project_persistence,
+    )
+
+    project = QgsProject()
+    try:
+        path = filename if "://" in filename else str(tmp_path / filename)
+        if filename == "invalid.qgz":
+            Path(path).write_bytes(b"Not a QGIS archive")
+        project.setFileName(path)
+        project.writeEntry(PROJECT_SCOPE, PROJECT_KEY, str(uuid4()))
+        assert "save" in project_persistence(project).notice.lower()
+    finally:
+        sip.delete(project)

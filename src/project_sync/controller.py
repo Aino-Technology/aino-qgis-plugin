@@ -8,11 +8,11 @@ from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
 
 from .area import require_gui_thread
 from .recovery import (
-    PROJECT_KEY,
-    PROJECT_SCOPE,
     PROVENANCE_KEY,
     RecoveryJournal,
     project_identity,
+    project_persistence,
+    replace_project_identity,
 )
 from .upload_transport import UploadTransport
 from .styles import canonical_bytes
@@ -191,6 +191,7 @@ class SyncController(QObject):
         self._closed = False
         self._callback = None
         self.project = None
+        self._persistence = None
         self.account_id = None
         self.client_project_id = None
         self.state = None
@@ -224,10 +225,27 @@ class SyncController(QObject):
         loaded = self.journal.load(identity, self.account_id) or {}
         self.datasets = loaded.get("datasets", {})
         self.state = loaded.get("sync")
-        if not project.fileName():
-            self.notice.emit(
-                "Save the QGIS project yourself to recover its Aino link after restarting QGIS. It has not been saved automatically."
-            )
+        self._watch_persistence(project)
+
+    def _watch_persistence(self, project):
+        tracker = project_persistence(project)
+        if tracker is not self._persistence:
+            self._unwatch_persistence()
+            self._persistence = tracker
+            tracker.changed.connect(self._identity_notice)
+        self._identity_notice()
+
+    def _unwatch_persistence(self):
+        if self._persistence is not None:
+            try:
+                self._persistence.changed.disconnect(self._identity_notice)
+            except (TypeError, RuntimeError):
+                pass
+            self._persistence = None
+
+    def _identity_notice(self):
+        if self._persistence is not None and not self._closed:
+            self.notice.emit(self._persistence.notice)
 
     def prepare(self, project, layers, on_ready, *, context=None):
         """Accept completed captures; frozen pending work must be reconciled before new preparation."""
@@ -306,7 +324,8 @@ class SyncController(QObject):
     def detach(self, project):
         """Explicitly start a separate local association without deleting prior recovery state."""
         self.pause()
-        project.writeEntry(PROJECT_SCOPE, PROJECT_KEY, str(uuid4()))
+        self._watch_persistence(project)
+        replace_project_identity(project)
         self.project = None
         self.state = None
         self.datasets = {}
@@ -324,10 +343,12 @@ class SyncController(QObject):
     def close(self):
         """Stop local work on unload, never sending server cancellation."""
         self.pause()
+        self._unwatch_persistence()
         self._closed = True
 
     def _account_changed(self, previous, current):
         self.pause()
+        self._unwatch_persistence()
         self.account_id = None
         self.client_project_id = None
         self.state = None

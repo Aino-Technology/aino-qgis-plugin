@@ -2,10 +2,13 @@ import hashlib
 import json
 import os
 import tempfile
+import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from qgis.PyQt.QtCore import QStandardPaths
+from qgis.PyQt.QtCore import QObject, QStandardPaths, QTimer, pyqtSignal
+from qgis.core import QgsProject
 
 
 PROJECT_SCOPE = "aino"
@@ -13,16 +16,116 @@ PROJECT_KEY = "client_project_id"
 PROVENANCE_KEY = "aino/output_provenance"
 
 
+def _current_identity(project):
+    if not isinstance(project, QgsProject):
+        return None
+    value, _ = project.readEntry(PROJECT_SCOPE, PROJECT_KEY, "")
+    return str(UUID(value)) if value else None
+
+
+def _xml_identity(stream):
+    path = []
+    for event, element in ET.iterparse(stream, events=("start", "end")):
+        if event == "start":
+            path.append(element.get("name", element.tag))
+        else:
+            if path == ["qgis", "properties", PROJECT_SCOPE, PROJECT_KEY]:
+                return str(UUID(element.text or ""))
+            path.pop()
+            element.clear()
+    return None
+
+
+def _stored_identity(project):
+    if not isinstance(project, QgsProject):
+        return None
+    filename = project.fileName()
+    if not filename or "://" in filename or project.projectStorage() is not None:
+        return None
+    path = Path(filename)
+    try:
+        if path.suffix.lower() == ".qgz":
+            with zipfile.ZipFile(path) as archive:
+                names = [
+                    name for name in archive.namelist() if name.lower().endswith(".qgs")
+                ]
+                if len(names) != 1:
+                    return None
+                with archive.open(names[0]) as stream:
+                    return _xml_identity(stream)
+        if path.suffix.lower() == ".qgs":
+            with path.open("rb") as stream:
+                return _xml_identity(stream)
+    except (OSError, ValueError, RuntimeError, ET.ParseError, zipfile.BadZipFile):
+        return None
+    return None
+
+
+class ProjectIdentityPersistence(QObject):
+    """Track the saved UUID as a project-owned object, independently of unrelated edits."""
+
+    changed = pyqtSignal()
+
+    def __init__(self, project):
+        super().__init__(project)
+        self.setObjectName("aino-recovery-identity")
+        self.saved_identity = _stored_identity(project)
+        self._save_refresh = QTimer(self)
+        self._save_refresh.setSingleShot(True)
+        self._save_refresh.timeout.connect(self._refresh)
+        project.projectSaved.connect(self._saved)
+        project.readProject.connect(self._refresh)
+        project.fileNameChanged.connect(self._refresh)
+        project.cleared.connect(self._cleared)
+
+    @property
+    def notice(self):
+        try:
+            identity = _current_identity(self.parent())
+        except ValueError:
+            return "The current Aino association UUID is invalid; synchronization cannot recover this link."
+        if not identity or identity == self.saved_identity:
+            return ""
+        return (
+            "Save the QGIS project yourself to persist its current Aino link and recover it after restarting QGIS. "
+            "This association UUID is not confirmed in the saved project. It has not been saved automatically."
+        )
+
+    def _saved(self):
+        self._save_refresh.start(0)
+
+    def _refresh(self, *args):
+        self.saved_identity = _stored_identity(self.parent())
+        self.changed.emit()
+
+    def _cleared(self):
+        self._save_refresh.stop()
+        self.saved_identity = None
+        self.changed.emit()
+
+
+def project_persistence(project):
+    """Return the one lifecycle-bound persistence tracker owned by this QgsProject."""
+    tracker = project.findChild(ProjectIdentityPersistence, "aino-recovery-identity")
+    return tracker if tracker is not None else ProjectIdentityPersistence(project)
+
+
+def replace_project_identity(project):
+    """Replace only the in-memory association and disclose the need for an explicit save."""
+    tracker = project_persistence(project)
+    identity = str(uuid4())
+    project.writeEntry(PROJECT_SCOPE, PROJECT_KEY, identity)
+    tracker.changed.emit()
+    return identity
+
+
 def project_identity(project, create=True):
     """Return a project UUID preserved by Save As without saving the project."""
-    value, _ = project.readEntry(PROJECT_SCOPE, PROJECT_KEY, "")
-    if value:
-        return str(UUID(value))
-    if not create:
-        return None
-    value = str(uuid4())
-    project.writeEntry(PROJECT_SCOPE, PROJECT_KEY, value)
-    return value
+    project_persistence(project)
+    value = _current_identity(project)
+    if value or not create:
+        return value
+    return replace_project_identity(project)
 
 
 def _check_secrets(value):
