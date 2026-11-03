@@ -5,6 +5,7 @@ from uuid import uuid4
 import pytest
 from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QCoreApplication, QEvent
+from qgis.PyQt.QtWidgets import QMessageBox
 
 from src.api_client import ApiResponse
 from src.login.login_tab import LoginDialog
@@ -30,9 +31,11 @@ def test_login_banner_replacements_and_trimmed_async_login(client, local_api, wa
     )
     local_api.respond(0, 400, {"error": "invalid_grant"})
     wait_for(lambda: dialog.process_login.isEnabled())
-    assert "incorrect" in dialog.error_label.text()
-    assert not dialog.error_label.geometry().intersects(dialog.signup_button.geometry())
-    assert not dialog.error_label.geometry().intersects(dialog.label_7.geometry())
+    popup = dialog.findChildren(QMessageBox)[0]
+    assert "incorrect" in popup.text()
+    popup.button(QMessageBox.StandardButton.Ok).click()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert sip.isdeleted(popup)
     dialog.password.setText("synthetic-password")
     dialog.check_credentials()
     wait_for(lambda: len(local_api.requests) == 2)

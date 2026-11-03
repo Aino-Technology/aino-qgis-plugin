@@ -6,7 +6,7 @@ import sys
 from qgis.PyQt import uic
 from qgis.PyQt.QtCore import QEvent, Qt
 from qgis.PyQt.QtGui import QPixmap
-from qgis.PyQt.QtWidgets import QDialog, QLabel
+from qgis.PyQt.QtWidgets import QDialog, QMessageBox
 
 
 _QT_KEY = getattr(Qt, "Key", Qt)
@@ -31,11 +31,8 @@ class LoginDialog(QDialog):
         self.main_ui = main_ui
         self._request = None
         self._login_email = None
-        self.error_label = QLabel(self)
-        self.error_label.setWordWrap(True)
-        self.error_label.setTextFormat(_QT_PLAIN_TEXT)
-        self.error_label.setGeometry(30, 585, 421, 52)
-        self.error_label.setStyleSheet("color: #B42318; background: white;")
+        self._error_dialog = None
+        self._closing = False
         self.finished.connect(self._cleanup)
         handles = []
         self._handles = handles
@@ -148,10 +145,48 @@ class LoginDialog(QDialog):
 
         return "Unable to log in right now. Please try again."
 
+    def show_login_error(self, message, icon=QMessageBox.Icon.Warning):
+        """Present the upstream login error without a nested dialog event loop."""
+        if self._closing or getattr(self.main_ui, "unloading", False):
+            return
+        message_box = self._error_dialog
+        if message_box is None:
+            message_box = QMessageBox(self)
+            self._error_dialog = message_box
+            message_box.setWindowTitle("Login failed")
+            message_box.setTextFormat(_QT_PLAIN_TEXT)
+            message_box.setStandardButtons(QMessageBox.StandardButton.Ok)
+            message_box.setStyleSheet(
+                "QMessageBox { background-color: #FFFFFF; color: #111827; }"
+                "QMessageBox QLabel { background-color: transparent; color: #111827; }"
+                "QMessageBox QPushButton { background-color: #111827; color: #FFFFFF; "
+                "border: 1px solid #111827; border-radius: 8px; min-width: 72px; "
+                "padding: 6px 16px; }"
+                "QMessageBox QPushButton:hover { background-color: #315EFB; "
+                "border-color: #315EFB; }"
+                "QMessageBox QPushButton:focus { border: 2px solid #315EFB; }"
+            )
+            message_box.finished.connect(self._error_finished)
+        message_box.setIcon(icon)
+        if len(message) > 1000:
+            message_box.setText(
+                "The login request failed. Open Details for the complete error message."
+            )
+            message_box.setDetailedText(message)
+        else:
+            message_box.setText(message)
+            message_box.setDetailedText("")
+        message_box.open()
+
+    def _error_finished(self, result):
+        message_box, self._error_dialog = self._error_dialog, None
+        if message_box is not None:
+            message_box.deleteLater()
+
     def handle_signup(self, _checked=False):
         import webbrowser
 
-        if self.main_ui.unloading:
+        if self._closing or self._error_dialog is not None or self.main_ui.unloading:
             return
         if self._request and self._request.active:
             return
@@ -162,14 +197,17 @@ class LoginDialog(QDialog):
             self.show()
 
     def check_credentials(self):
-        if getattr(self.main_ui, "unloading", False):
+        if (
+            self._closing
+            or self._error_dialog is not None
+            or getattr(self.main_ui, "unloading", False)
+        ):
             return
         if self._request and self._request.active:
             return
         self.expand_username_replacement()
         self._login_email = self.username.text().strip()
         self.process_login.setEnabled(False)
-        self.error_label.clear()
         self._request = self.main_ui.api_client.send(
             "POST",
             "/public/auth/login",
@@ -180,23 +218,47 @@ class LoginDialog(QDialog):
         self.password.clear()
 
     def _login_finished(self, result):
+        if self._closing or getattr(self.main_ui, "unloading", False):
+            return
         self._request = None
         self._handles.clear()
         self.process_login.setEnabled(True)
-        if result.ok and isinstance(result.data, dict):
+        if result.error == "network_error" or not result.status:
+            self.show_login_error(
+                "Unable to connect to Aino. Check your connection and try again.",
+                QMessageBox.Icon.Critical,
+            )
+        elif result.error == "invalid_json" or (
+            result.ok and not isinstance(result.data, dict)
+        ):
+            self.show_login_error(
+                "Invalid server response: expected a valid login JSON object.",
+                QMessageBox.Icon.Critical,
+            )
+        elif result.ok:
+            access_token = result.data.get("access_token")
+            if not access_token:
+                self.show_login_error(
+                    "The server did not return an access token.",
+                    QMessageBox.Icon.Critical,
+                )
+                return
             try:
-                self.main_ui.session.set_access_token(result.data.get("access_token"))
+                self.main_ui.session.set_access_token(access_token)
             except ValueError as error:
-                self.error_label.setText(str(error))
+                self.show_login_error(str(error), QMessageBox.Icon.Critical)
                 return
             self.main_ui.user_email = self._login_email
             if getattr(self.main_ui, "main_dlg", None) is not None:
                 self.main_ui.main_dlg.set_account_email(self._login_email)
             self.accept()
         else:
-            self.error_label.setText(self.format_login_error(result))
+            self.show_login_error(self.format_login_error(result))
 
     def _cleanup(self, result):
+        self._closing = True
+        if self._error_dialog is not None:
+            self._error_dialog.close()
         if not result:
             self.main_ui.session.cancel_login()
         if self._request:
