@@ -19,6 +19,8 @@ from src.project_sync.styles import RenderReference
 
 from .helpers import (
     update_scroll_area,
+    analysis_limits_text,
+    update_days_label,
 )
 
 _QT_POINTING_HAND_CURSOR = getattr(getattr(Qt, "CursorShape", Qt), "PointingHandCursor")
@@ -52,6 +54,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self._setup_analysis()
 
         self.go_button.clicked.connect(self.start_osm_thread)
+        self.prompt_field.textChanged.connect(self._prompt_changed)
         self.upload_button.clicked.connect(self.upload_process)
         self.currentChanged.connect(lambda _: update_scroll_area(self))
         self.limits_response = None
@@ -61,6 +64,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.trial_label.setText("Trial subscription")
         self.prompts_label.setGeometry(165, 102, 365, 36)
         self.prompts_label.setWordWrap(True)
+        self.prompts_label.setTextFormat(Qt.TextFormat.PlainText)
         self.prompts_label.setText("Aino checks credits and limits on submission.")
 
     def _setup_inputs(self):
@@ -513,6 +517,12 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             and latest.get("status") not in TERMINAL
         )
         self.go_button.setEnabled(not active and not state.get("action_intent"))
+        self.go_button.setText("Working…" if active else "GO")
+        self.request_status_label.setText(
+            "Analysis: " + latest.get("status", "submitting").replace("_", " ")
+            if active or latest.get("status")
+            else "Ready — prepare and sync inputs, then press GO."
+        )
         if rejection.get("operation") == "start" and not active:
             self.analysis_stage.setText("Preparation: start rejected")
         elif state:
@@ -608,8 +618,18 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         if self.analysis_link.isEnabled():
             QDesktopServices.openUrl(QUrl(self.analysis_url))
 
+    def _prompt_changed(self):
+        if self.go_button.isEnabled():
+            self.request_status_label.setText(
+                "Ready — prepare and sync inputs, then press GO."
+            )
+
     def start_osm_thread(self):
-        self.send_osm_request(self.prompt_field.toPlainText())
+        prompt = self.prompt_field.toPlainText()
+        if not prompt.strip():
+            self.request_status_label.setText("Enter an analysis request first.")
+            return
+        self.send_osm_request(prompt)
 
     def send_osm_request(self, prompt):
         state = self.sync_controller.state or {}
@@ -636,8 +656,12 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         return handle
 
     def process_result(self, response, request_type):
-        if not response.ok:
-            self._limit_errors[request_type] = response.message
+        if not response.ok or not isinstance(response.data, dict):
+            self._limit_errors[request_type] = (
+                response.message
+                if not response.ok
+                else "Invalid account information response"
+            )
             self.update_interface_with_restrictions_finish()
             return
         self._limit_errors.pop(request_type, None)
@@ -667,9 +691,23 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         subscription = (self.subscriptions_response or {}).get(
             "current_subscription"
         ) or {}
+        if not isinstance(subscription, dict):
+            subscription = {}
         self.trial_label.setVisible(
             subscription.get("subscription_plan_code") == "trial"
         )
+        self.trial_label.setText("Trial subscription")
+        if subscription.get("subscription_plan_code") != "free" and subscription.get(
+            "expiration_date"
+        ):
+            try:
+                update_days_label(self, {"current_subscription": subscription})
+                self.trial_label.setVisible(
+                    subscription.get("subscription_plan_code") == "trial"
+                    or self.trial_label.text() != "Trial subscription"
+                )
+            except (KeyError, TypeError, ValueError):
+                pass
         self.prompt_field.setReadOnly(False)
         if self._limit_errors:
             message = "; ".join(self._limit_errors.values())
@@ -677,15 +715,23 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self.prompts_label.setToolTip(message)
             self.prompts_label.setStyleSheet("color: red;")
         else:
-            self.prompts_label.setText("Aino checks credits and limits on submission.")
+            self.prompts_label.setText(analysis_limits_text(self.limits_response))
             self.prompts_label.setStyleSheet("")
             self.prompts_label.setToolTip("")
 
     def update_interface_with_restrictions_start(self):
+        for handle in self._handles:
+            handle.abort()
+        self._handles.clear()
+        self.subscriptions_response = None
+        self.limits_response = None
+        self._limit_errors.clear()
         self.get_current_subscription()
         self.get_current_limits()
 
     def _account_changed(self, previous, current):
+        self.main_ui.user_email = None
+        self.set_account_email(None)
         self._discard_capture()
         self._restore_map_tool()
         self.project_id = None
@@ -727,6 +773,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         account_layout.setSpacing(8)
 
         self.account_email_label = QtWidgets.QLabel("Signed in")
+        self.account_email_label.setTextFormat(Qt.TextFormat.PlainText)
         self.account_email_label.setObjectName("account_email_label")
         self.account_email_label.setMaximumWidth(175)
         self.account_email_label.setWordWrap(False)
@@ -749,13 +796,11 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         )
         self.setCornerWidget(self.account_widget, _QT_TOP_RIGHT_CORNER)
 
-
     def set_account_email(self, email):
         """Show the signed-in email and keep the full value available on hover."""
         account_email = (email or "").strip() or "Signed in"
         self.account_email_label.setText(account_email)
         self.account_email_label.setToolTip(account_email)
-
 
     def sign_out(self):
         self.hide()

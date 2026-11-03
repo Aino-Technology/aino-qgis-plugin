@@ -23,7 +23,7 @@ Tested on macOS with the official QGIS versions available on 2026-11-02:
 | 3.44.15 LTR | 5.15.19 | 5.15.10 | 3.12.11 |
 | 4.2.3 stable | 6.11.1 | 6.11.0 | 3.12.11 |
 
-The declared QGIS range is 3.44.15–4.2.3, bounded by the versions tested here. Windows and Linux have not been tested. Use the Python interpreter bundled with each QGIS runtime; do not install another Qt binding over QGIS. The tests initialize a temporary QGIS profile and communicate only with an injected localhost HTTP fixture:
+The declared QGIS range is 3.44.15–4.99. Native validation covers the exact macOS builds 3.44.15/Qt5 and 4.2.3/Qt6 listed above; other versions within the declared range have not been tested. The managed GeoPackage field-comment APIs require GDAL 3.7 or newer. Windows and Linux have not been tested. Use the Python interpreter bundled with each QGIS runtime; do not install another Qt binding over QGIS. The tests initialize a temporary QGIS profile and communicate only with an injected localhost HTTP fixture:
 
 ```sh
 QT_QPA_PLATFORM=offscreen /path/to/qgis-python -m pytest tests/test_api_client.py -q

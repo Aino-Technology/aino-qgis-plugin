@@ -40,8 +40,8 @@ QTabBar::tab {
  border-bottom: none;
  border-top-left-radius: 10px;
  border-top-right-radius: 10px;
- padding: 8px 18px;
- min-width: 66px;
+ padding: 8px 10px;
+ min-width: 56px;
 }
 QTabBar::tab:selected {
  background-color: #111827;
@@ -372,7 +372,7 @@ padding: 2px 0;
 </string>
     </property>
     <property name="text">
-     <string>Ready — enter a request to create a layer.</string>
+     <string>Ready — prepare and sync inputs, then press GO.</string>
     </property>
     <property name="wordWrap">
      <bool>true</bool>

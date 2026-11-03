@@ -533,7 +533,7 @@ def test_completion_checks_identity_during_earlier_account_change_listener(
         session.deleteLater()
 
 
-@pytest.mark.parametrize("entry", ["start", "signup"])
+@pytest.mark.parametrize("entry", ["direct", "signup"])
 def test_unload_closes_nested_owned_auth_dialogs_without_reopening(
     local_api, wait_for, qgis_app, monkeypatch, entry
 ):
@@ -615,13 +615,12 @@ def test_unload_closes_nested_owned_auth_dialogs_without_reopening(
             plugin.unload()
 
     def begin():
-        owned.append(plugin.start_dlg)
-        if entry == "start":
-            QTimer.singleShot(0, stop_from_login)
-            plugin.start_dlg.login()
+        owned.append(plugin._login_dialog)
+        if entry == "direct":
+            stop_from_login()
         else:
             QTimer.singleShot(0, signup_login)
-            plugin.start_dlg.handle_signup()
+            plugin._login_dialog.handle_signup()
 
     try:
         QTimer.singleShot(0, begin)

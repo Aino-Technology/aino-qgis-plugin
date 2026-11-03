@@ -11,6 +11,7 @@ FILES = (
     "resources.py",
     "metadata.txt",
     "icon.svg",
+    "Welcome.svg",
     "README.md",
     "RELEASE_NOTES.md",
     "LICENSE",

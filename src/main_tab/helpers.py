@@ -148,3 +148,17 @@ def update_days_label(main_ui, api_response):
             )
 
 
+def analysis_limits_text(response):
+    fallback = "Aino checks credits and limits on submission."
+    limits = (response or {}).get("limits", [])
+    if not isinstance(limits, list):
+        return fallback
+    for limit in limits:
+        if not isinstance(limit, dict) or limit.get("name") != "agent_analysis":
+            continue
+        if limit.get("type") == "unlimited":
+            return "Unlimited analysis requests"
+        left, total = limit.get("left_amount"), limit.get("total_amount")
+        if left is not None and total is not None:
+            return f"{left}/{total} analyses — Aino checks credits on submission."
+    return fallback

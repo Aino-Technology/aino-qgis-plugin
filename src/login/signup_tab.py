@@ -32,6 +32,9 @@ class SignupDialog(QtWidgets.QDialog):
     def login(self):
         if self.main_ui.unloading:
             return
+        if self.parent() is getattr(self.main_ui, "_login_dialog", None):
+            self.reject()
+            return
         self.hide()
         if self.main_ui.exec_login(self):
             self.accept()

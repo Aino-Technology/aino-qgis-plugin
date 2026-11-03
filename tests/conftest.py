@@ -140,3 +140,12 @@ def client(local_api, qgis_app):
         api.deleteLater()
     session.deleteLater()
     qgis_app.processEvents()
+
+
+@pytest.fixture(autouse=True)
+def synthetic_login_replacements(monkeypatch):
+    from src.login.login_tab import LoginDialog
+
+    monkeypatch.setattr(
+        LoginDialog, "load_macos_text_replacements", staticmethod(lambda: {})
+    )

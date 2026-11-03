@@ -4,7 +4,7 @@
 
 [general]
 name=Aino
-qgisMinimumVersion=3.25
+qgisMinimumVersion=3.44.15
 qgisMaximumVersion=4.99
 description=Run multistep spatial analyses with your QGIS layers in Aino
 version=0.2.0
