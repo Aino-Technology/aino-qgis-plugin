@@ -89,7 +89,7 @@ The section stores `start_intent` (the complete immutable request body and UUID)
 flat action body/UUID), and optional `results` (manifest and full report). Mutating
 requests are persisted before sending; uncertain start/action responses retain their
 exact request IDs and payloads. Resume retries these intents, never retargets an old
-answer. A 409 discards only that rejected action intent and refreshes server state.
+answer. A typed qgis_action_conflict discards only that rejected action intent and refreshes server state.
 Other failures remain recoverable and do not create a failed analysis state.
 A second analysis requires the previous server task to be terminal and no uncertain
 action receipt. Revisions older than the displayed state are ignored.
@@ -129,3 +129,33 @@ Recognized standalone widget markers are omitted from text display; rich web wid
 remain accessible through Open in Aino. The full server report is retained in the
 journal regardless of display shape. Unknown reports fall back to an explicitly
 labelled preview/link, without dumping arbitrary JSON or inventing findings.
+
+
+#### Definitive rejection and uncertain delivery
+
+The analysis journal now also records `start_dispatched` / `action_dispatched`.
+New intents initially have a false marker; the controller durably sets it true before
+HTTP. A restored true marker or a missing marker in an older journal means prior
+delivery may have occurred. Such an intent retains its exact UUID/body across retries.
+
+The QGIS start/action routes identify body validation before RPC dispatch with HTTP
+400 and `{result: "bad_request", domain: "api_gateway", error_code:
+"qgis_request_validation"}`. The controller may release that intent only when this
+was its first observed dispatch. The same response after a lost reply, restart or
+legacy journal cannot rule out an earlier acceptance, so it does not release the
+intent. No decision depends on error-message prose or HTTP status alone.
+
+For actions, the exact HTTP 403 `forbidden` / `billing` / `insufficient_credits` tuple
+is definitive because core raises it after checking the locked action receipt.
+The HTTP 409 `conflict` / `core` / `qgis_action_conflict` tuple also follows receipt
+lookup. Arbitrary 400/403/409 responses, transport failures and wrong-domain codes
+remain uncertain. Error text is only for display, with any appended debug traceback
+excluded from the displayed/persisted rejection message.
+
+A known rejection is atomically stored as `analysis.last_rejection` with operation,
+original request, status/domain/code and readable message before its active intent is
+removed locally. Rejected starts can be corrected with GO and a new UUID. Rejected
+actions immediately resume polling and enable a corrected action or explicit Cancel;
+cancellation remains available after restarting the plugin. The notice
+survives dialog/controller reconstruction. A new explicit intent replaces the notice;
+continuing polling never retargets the rejected answer.

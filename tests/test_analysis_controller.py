@@ -202,7 +202,7 @@ def test_action_durable_loss_replay_and_stale_round_refresh(setup):
     api.answer(status=0, error="network_error")
     controller.restore()
     assert api.calls[-1][2] == original
-    api.answer({"message": "stale"}, 409)
+    api.answer(rejection("qgis_action_conflict", "core", "conflict"), 409)
     assert api.calls[-1][0] == "GET"
     api.answer(state(task, 5))
     assert "action_intent" not in controller.state
@@ -631,3 +631,286 @@ def test_optional_project_defaults_to_current_qgis_project(setup):
     finally:
         controller.close()
         sip.delete(controller)
+
+
+def rejection(
+    code, domain="api_gateway", result="bad_request", message="Request rejected"
+):
+    return {
+        "result": result,
+        "domain": domain,
+        "error_code": code,
+        "error_message": message,
+    }
+
+
+def test_definite_start_validation_rejection_survives_restart_and_allows_correction(
+    setup,
+):
+    controller, api, clock, journal, project = setup
+    controller.start(17, str(uuid4()), "x" * 50001, {})
+    rejected = api.calls[-1][2]
+    api.answer(
+        rejection("qgis_request_validation", message="Prompt exceeds 50000 characters"),
+        400,
+    )
+    assert "start_intent" not in controller.state
+    assert controller.state["last_rejection"]["request"] == rejected
+    assert (
+        journal.load(project_identity(project), "account-a")["analysis"][
+            "last_rejection"
+        ]["operation"]
+        == "start"
+    )
+    controller.pause()
+    recovered = AnalysisController(
+        api, journal=journal, project=project, scheduler=Clock()
+    )
+    try:
+        count = len(api.calls)
+        recovered.restore()
+        assert len(api.calls) == count
+        assert (
+            recovered.state["last_rejection"]["message"]
+            == "Prompt exceeds 50000 characters"
+        )
+        recovered.start(17, str(uuid4()), "Find parks", {})
+        assert api.calls[-1][2]["request_id"] != rejected["request_id"]
+        assert api.calls[-1][2]["prompt"] == "Find parks"
+    finally:
+        recovered.close()
+        sip.delete(recovered)
+
+
+def test_insufficient_credit_action_rejection_restores_polling_and_cancel_after_restart(
+    setup,
+):
+    controller, api, clock, journal, project = setup
+    task = str(uuid4())
+    controller.restore(task)
+    pending = waiting(task)
+    api.answer(pending)
+    controller.submit_action(
+        {
+            "kind": "answer",
+            "action_id": pending["pending_action"]["action_id"],
+            "payload": {"answers": [{"question_id": "q", "text": "parks"}]},
+        }
+    )
+    rejected = api.calls[-1][2]
+    api.answer(
+        rejection("insufficient_credits", "billing", "forbidden", "Not enough credits"),
+        403,
+    )
+    assert "action_intent" not in controller.state
+    assert api.calls[-1][0] == "GET" and controller.polling.task_id == task
+    assert (
+        journal.load(project_identity(project), "account-a")["analysis"][
+            "last_rejection"
+        ]["request"]
+        == rejected
+    )
+    controller.pause()
+    recovered = AnalysisController(
+        api, journal=journal, project=project, scheduler=Clock()
+    )
+    try:
+        recovered.restore()
+        assert api.calls[-1][0] == "GET"
+        recovered.cancel()
+        assert api.calls[-1][2]["kind"] == "cancel"
+        assert api.calls[-1][2]["request_id"] != rejected["request_id"]
+        api.answer(state(task, 3, "cancelled"))
+        assert recovered.state["latest"]["status"] == "cancelled"
+    finally:
+        recovered.close()
+        sip.delete(recovered)
+
+
+@pytest.mark.parametrize("operation", ["start", "action"])
+@pytest.mark.parametrize("failure", ["network", "restart", "legacy"])
+def test_validation_after_uncertain_delivery_preserves_original_intent(
+    setup, operation, failure
+):
+    controller, api, clock, journal, project = setup
+    if operation == "start":
+        controller.start(17, str(uuid4()), "parks", {})
+    else:
+        task = str(uuid4())
+        controller.restore(task)
+        pending = waiting(task)
+        api.answer(pending)
+        controller.submit_action(
+            {
+                "kind": "answer",
+                "action_id": pending["pending_action"]["action_id"],
+                "payload": {},
+            }
+        )
+    original = api.calls[-1][2]
+    intent_key = operation + "_intent"
+    if failure == "network":
+        api.answer(status=0, error="network_error")
+        controller.restore()
+        recovered = controller
+    else:
+        controller.pause()
+        if failure == "legacy":
+            saved = journal.load(project_identity(project), "account-a")["analysis"]
+            saved.pop(operation + "_dispatched", None)
+            journal.update_sections(
+                project_identity(project), "account-a", analysis=saved
+            )
+        recovered = AnalysisController(
+            api, journal=journal, project=project, scheduler=Clock()
+        )
+        recovered.restore()
+    try:
+        assert api.calls[-1][2] == original
+        api.answer(rejection("qgis_request_validation"), 400)
+        assert recovered.state[intent_key] == original
+        recovered.restore()
+        assert api.calls[-1][2] == original
+    finally:
+        if recovered is not controller:
+            recovered.close()
+            sip.delete(recovered)
+
+
+@pytest.mark.parametrize("operation", ["start", "action"])
+@pytest.mark.parametrize(
+    "status, data",
+    [
+        (403, rejection("permission_denied", "core", "forbidden")),
+        (403, rejection("insufficient_credits", "wrong", "forbidden")),
+        (400, rejection("unexpected_error")),
+        (409, rejection("conflict", "api_gateway", "conflict")),
+        (500, rejection("qgis_request_validation")),
+    ],
+)
+def test_arbitrary_error_is_not_proof_of_nonacceptance(setup, operation, status, data):
+    controller, api, clock, journal, project = setup
+    if operation == "start":
+        controller.start(17, str(uuid4()), "parks", {})
+    else:
+        task = str(uuid4())
+        controller.restore(task)
+        pending = waiting(task)
+        api.answer(pending)
+        controller.submit_action(
+            {
+                "kind": "answer",
+                "action_id": pending["pending_action"]["action_id"],
+                "payload": {},
+            }
+        )
+    original = api.calls[-1][2]
+    api.answer(data, status)
+    assert controller.state[operation + "_intent"] == original
+    controller.restore()
+    assert api.calls[-1][2] == original
+
+
+@pytest.mark.parametrize("operation", ["start", "action"])
+def test_native_rejection_controls_and_notice_survive_restart(
+    qgis_app, tmp_path, operation
+):
+    from types import SimpleNamespace
+    from qgis.gui import QgsMapCanvas
+    from src.main_tab import OsmParserDialogMain
+
+    project = QgsProject.instance()
+    project.clear()
+    canvas = QgsMapCanvas()
+    session = Session()
+    session.set_access_token(token())
+    api = Api(session)
+    owner = SimpleNamespace(
+        session=session,
+        api_client=api,
+        recovery_journal=RecoveryJournal(tmp_path),
+        iface=SimpleNamespace(mapCanvas=lambda: canvas),
+    )
+    dialogs = [OsmParserDialogMain(osm_parser=owner)]
+    try:
+        dialog = dialogs[0]
+        controller = dialog.analysis_controller
+        if operation == "start":
+            controller.start(17, str(uuid4()), "x" * 50001, {})
+            api.answer(
+                rejection("qgis_request_validation", message="Prompt too long"), 400
+            )
+            assert dialog.go_button.isEnabled()
+            assert not dialog.analysis_resume.isEnabled()
+            assert "start rejected" in dialog.analysis_stage.text()
+        else:
+            task = str(uuid4())
+            controller.restore(task)
+            pending = waiting(task)
+            api.answer(pending)
+            controller.submit_action(
+                {
+                    "kind": "answer",
+                    "action_id": pending["pending_action"]["action_id"],
+                    "payload": {},
+                }
+            )
+            api.answer(
+                rejection(
+                    "insufficient_credits", "billing", "forbidden", "Not enough credits"
+                ),
+                403,
+            )
+            assert dialog.analysis_cancel.isEnabled()
+            assert dialog.analysis_actions.isEnabled()
+            assert api.calls[-1][0] == "GET"
+        dialog.close()
+        restored = OsmParserDialogMain(osm_parser=owner)
+        dialogs.append(restored)
+        assert "rejected" in restored.analysis_rejection.text()
+        if operation == "start":
+            assert restored.go_button.isEnabled()
+            assert not restored.analysis_resume.isEnabled()
+        else:
+            assert restored.analysis_cancel.isEnabled()
+            api.answer(state(task, 3, "completed"))
+            assert restored.analysis_controller.state["latest"]["status"] == "completed"
+            assert not restored.analysis_cancel.isEnabled()
+    finally:
+        for dialog in dialogs:
+            dialog.close()
+            dialog.analysis_controller.close()
+            dialog.sync_controller.close()
+            sip.delete(dialog)
+        sip.delete(canvas)
+        sip.delete(session)
+        project.clear()
+
+
+def test_first_action_validation_rejection_releases_only_rejected_body(setup):
+    controller, api, clock, journal, project = setup
+    task = str(uuid4())
+    controller.restore(task)
+    pending = waiting(task)
+    api.answer(pending)
+    controller.submit_action(
+        {
+            "kind": "answer",
+            "action_id": pending["pending_action"]["action_id"],
+            "payload": {},
+        }
+    )
+    rejected = api.calls[-1][2]
+    api.answer(rejection("qgis_request_validation"), 400)
+    assert "action_intent" not in controller.state
+    assert controller.state["last_rejection"]["request"] == rejected
+    assert api.calls[-1][0] == "GET"
+    api.answer(pending)
+    controller.submit_action(
+        {
+            "kind": "answer",
+            "action_id": pending["pending_action"]["action_id"],
+            "payload": {"answers": [{"question_id": "q", "text": "Corrected"}]},
+        }
+    )
+    assert api.calls[-1][2]["request_id"] != rejected["request_id"]

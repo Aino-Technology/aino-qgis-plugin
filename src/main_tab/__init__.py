@@ -405,6 +405,9 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.analysis_status = QtWidgets.QLabel(self)
         self.analysis_status.setTextFormat(Qt.TextFormat.PlainText)
         self.analysis_status.setWordWrap(True)
+        self.analysis_rejection = QtWidgets.QLabel(self)
+        self.analysis_rejection.setTextFormat(Qt.TextFormat.PlainText)
+        self.analysis_rejection.setWordWrap(True)
         self.analysis_actions = ActionPanel(self)
         scroll = QtWidgets.QScrollArea(self)
         scroll.setWidgetResizable(True)
@@ -421,6 +424,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         for widget in (
             self.analysis_stage,
             self.analysis_status,
+            self.analysis_rejection,
             self.analysis_steps,
             scroll,
             self.analysis_report,
@@ -449,6 +453,25 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def _analysis_changed(self, state):
         latest = state.get("latest") or {}
+        rejection = state.get("last_rejection") or {}
+        self.analysis_rejection.setText(
+            (
+                "Last submission rejected: "
+                + rejection.get("message", "")
+                + (
+                    " Correct the request and press GO."
+                    if rejection.get("operation") == "start"
+                    else " Review the current state."
+                    if latest.get("status") in TERMINAL
+                    else " Review the current state; you can submit a corrected action or cancel."
+                )
+            )
+            if rejection
+            else ""
+        )
+        self.analysis_resume.setEnabled(
+            bool(state.get("start_intent") or state.get("task_id"))
+        )
         self.analysis_actions.set_action(
             latest.get("pending_action"), bool(state.get("action_intent"))
         )
@@ -469,7 +492,9 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             and latest.get("status") not in TERMINAL
         )
         self.go_button.setEnabled(not active and not state.get("action_intent"))
-        if state:
+        if rejection.get("operation") == "start" and not active:
+            self.analysis_stage.setText("Preparation: start rejected")
+        elif state:
             self.analysis_stage.setText(
                 "Analysis: " + latest.get("status", "submitting").replace("_", " ")
             )

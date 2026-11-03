@@ -9,6 +9,39 @@ from src.project_sync.recovery import RecoveryJournal, project_identity
 from .polling import PollingController, TERMINAL, valid_state
 
 
+def _definite_rejection(response, operation, first_attempt):
+    if response.error not in {"", "http_error"} or not isinstance(response.data, dict):
+        return False
+    signature = (
+        response.status,
+        response.data.get("result"),
+        response.data.get("domain"),
+        response.data.get("error_code"),
+    )
+    if first_attempt and signature == (
+        400,
+        "bad_request",
+        "api_gateway",
+        "qgis_request_validation",
+    ):
+        return True
+    return operation == "action" and signature in {
+        (403, "forbidden", "billing", "insufficient_credits"),
+        (409, "conflict", "core", "qgis_action_conflict"),
+    }
+
+
+def _response_message(response):
+    value = (
+        response.data.get("error_message") if isinstance(response.data, dict) else None
+    )
+    return (
+        value.split("\n\n", 1)[0]
+        if isinstance(value, str) and value.strip()
+        else response.message
+    )
+
+
 class AnalysisController(QObject):
     """Recover one explicit analysis intent and its exact unresolved action body."""
 
@@ -86,13 +119,14 @@ class AnalysisController(QObject):
             )
         self.pause()
         self.state = {
+            "start_dispatched": False,
             "start_intent": {
                 "request_id": str(uuid4()),
                 "project_id": project_id,
                 "snapshot_id": snapshot_id,
                 "prompt": prompt,
                 "area": copy.deepcopy(area),
-            }
+            },
         }
         self._save()
         self.changed.emit(copy.deepcopy(self.state))
@@ -145,11 +179,37 @@ class AnalysisController(QObject):
 
         self._handles.append(self.api.send(method, path, body, complete))
 
-    def _start(self):
+    def _begin_dispatch(self, operation):
+        first_attempt = self.state.get(operation + "_dispatched") is False
+        self.state[operation + "_dispatched"] = True
         self._save()
+        return first_attempt
+
+    def _reject(self, operation, response):
+        next_state = copy.deepcopy(self.state)
+        request = next_state.pop(operation + "_intent")
+        next_state.pop(operation + "_dispatched", None)
+        next_state["last_rejection"] = {
+            "operation": operation,
+            "request": request,
+            "status": response.status,
+            "error_code": response.data["error_code"],
+            "domain": response.data["domain"],
+            "message": _response_message(response),
+        }
+        self.journal.update_sections(self.identity, self.account, analysis=next_state)
+        self.state = next_state
+        self.changed.emit(copy.deepcopy(self.state))
+        self.status.emit("Submission rejected: " + _response_message(response))
+
+    def _start(self):
+        first_attempt = self._begin_dispatch("start")
         self.status.emit("Analysis: submitting saved request…")
 
         def complete(response):
+            if _definite_rejection(response, "start", first_attempt):
+                self._reject("start", response)
+                return
             if not response.ok:
                 self.status.emit(
                     "Start response unavailable. Resume to retry the same request. "
@@ -214,26 +274,24 @@ class AnalysisController(QObject):
         intent["request_id"] = str(uuid4())
         intent.setdefault("payload", {})
         self.state["action_intent"] = intent
+        self.state["action_dispatched"] = False
+        self.state.pop("last_rejection", None)
         self._save()
         self.changed.emit(copy.deepcopy(self.state))
         self._action()
 
     def _action(self):
-        self._save()
+        first_attempt = self._begin_dispatch("action")
         self.polling.stop()
         task = self.state["task_id"]
 
         def complete(response):
-            if response.status == 409:
-                self.state.pop("action_intent", None)
-                self._save()
-                self.changed.emit(copy.deepcopy(self.state))
-                self.status.emit(
-                    "That action expired or changed. Refreshing the current round."
-                )
+            if _definite_rejection(response, "action", first_attempt):
+                self._reject("action", response)
                 self.polling.watch(task)
             elif response.ok and valid_state(response.data, task):
                 self.state.pop("action_intent", None)
+                self.state.pop("action_dispatched", None)
                 self._save()
                 self._updated(response.data)
                 if (self.state.get("latest") or {}).get("status") not in TERMINAL:
