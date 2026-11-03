@@ -269,3 +269,94 @@ def test_prepare_ui_ids_and_context_cancellation(qgis_app, tmp_path, wait_for):
     dialog.deleteLater()
     canvas.deleteLater()
     project.clear()
+
+
+@pytest.mark.parametrize("change", ["renderer", "center"])
+@pytest.mark.parametrize("stage", ["completed", "in_flight"])
+def test_prepare_invalidates_renderer_and_center_changes(
+    qgis_app, tmp_path, wait_for, change, stage
+):
+    from types import SimpleNamespace
+
+    from qgis.PyQt.QtCore import QCoreApplication, QEvent, Qt
+    from qgis.core import (
+        QgsCoordinateReferenceSystem,
+        QgsMarkerSymbol,
+        QgsPointXY,
+        QgsRectangle,
+        QgsSingleSymbolRenderer,
+    )
+    from qgis.gui import QgsMapCanvas
+
+    from src.main_tab import OsmParserDialogMain
+    from src.session import Session
+
+    project = QgsProject.instance()
+    layer = layer_with_values()
+    project.addMapLayer(layer)
+    canvas = QgsMapCanvas()
+    canvas.resize(800, 600)
+    canvas.setDestinationCrs(QgsCoordinateReferenceSystem("EPSG:3857"))
+    canvas.setExtent(QgsRectangle(0, 0, 2000, 2000))
+    session = Session()
+    dialog = OsmParserDialogMain(
+        osm_parser=SimpleNamespace(
+            session=session,
+            api_client=None,
+            iface=SimpleNamespace(mapCanvas=lambda: canvas),
+        )
+    )
+    completed = []
+    dialog.inputs_prepared.connect(
+        lambda area, outputs: completed.append((area, outputs))
+    )
+    try:
+        dialog.input_layers.item(0).setCheckState(Qt.CheckState.Checked)
+        if change == "center":
+            dialog.area_mode.setCurrentIndex(2)
+            dialog._pick_center()
+            dialog._point_tool.canvasClicked.emit(
+                QgsPointXY(500, 500), Qt.MouseButton.LeftButton
+            )
+            dialog._pick_center()
+            assert dialog._point_tool is not None
+        job = dialog.prepare_inputs(str(tmp_path))
+        assert job is not None, dialog.capture_status.text()
+        if stage == "completed":
+            wait_for(lambda: bool(completed))
+            assert dialog.prepared_inputs is not None
+            assert len(list(tmp_path.iterdir())) == 2
+        else:
+            job.timer.stop()
+            job.batch_size = 1
+            job._tick()
+            job.timer.stop()
+            assert job.active
+            assert list(tmp_path.glob("*.partial"))
+        expected_emissions = len(completed)
+        if change == "renderer":
+            layer.setRenderer(
+                QgsSingleSymbolRenderer(
+                    QgsMarkerSymbol.createSimple({"name": "circle", "color": "blue"})
+                )
+            )
+        else:
+            dialog._point_tool.canvasClicked.emit(
+                QgsPointXY(1500, 1500), Qt.MouseButton.LeftButton
+            )
+            assert dialog._center[0] == (1500, 1500)
+            assert dialog._point_tool is None
+        assert dialog.prepared_inputs is None
+        assert not job.active
+        assert not list(tmp_path.iterdir())
+        job.finished.emit([])
+        qgis_app.processEvents()
+        assert dialog.prepared_inputs is None
+        assert len(completed) == expected_emissions
+        assert not list(tmp_path.iterdir())
+    finally:
+        dialog.close()
+        dialog.deleteLater()
+        canvas.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        project.clear()

@@ -128,6 +128,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.center_label.setText("Click the map to choose the radius center")
 
     def _center_picked(self, point, button):
+        self._discard_capture()
         canvas = self.main_ui.iface.mapCanvas()
         self._center = ((point.x(), point.y()), canvas.mapSettings().destinationCrs())
         self.center_label.setText(
@@ -215,6 +216,8 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                 for name in [
                     "dataChanged",
                     "repaintRequested",
+                    "rendererChanged",
+                    "styleChanged",
                     "selectionChanged",
                     "nameChanged",
                     "crsChanged",
