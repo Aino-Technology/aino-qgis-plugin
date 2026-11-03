@@ -44,8 +44,12 @@ class RequestHandle:
         self.retries = 0
         self.active = True
 
+    @property
+    def pending(self):
+        return self.callback is not None
+
     def abort(self):
-        if self.active:
+        if self.pending:
             self.client._abort(self)
 
 
@@ -223,36 +227,38 @@ class ApiClient(QObject):
         invalidated = []
         for handle in tuple(self._pending):
             if (
-                handle.authenticated
+                handle.active
+                and handle.authenticated
                 and handle.account_id is not None
                 and handle.account_id != current
             ):
-                callback = handle.callback
                 reply = self._detach(handle)
-                invalidated.append((callback, reply))
+                invalidated.append((handle, reply))
         for _, reply in invalidated:
             self._abort_reply(reply)
-        for callback, _ in invalidated:
-            if not self._closed:
-                callback(ApiResponse(0, error="account_changed"))
+        for handle, _ in invalidated:
+            self._deliver(handle, ApiResponse(0, error="account_changed"))
 
     def _complete(self, handle, response):
         if not handle.active:
             return
+        self._abort_reply(self._detach(handle))
+        self._deliver(handle, response)
+
+    def _deliver(self, handle, response):
         callback = handle.callback
-        self._abort(handle)
+        handle.callback = None
+        self._pending.discard(handle)
         if handle.authenticated and handle.account_id != self.session.account_id:
             response = ApiResponse(0, error="account_changed")
-        if not self._closed:
+        if callback is not None and not self._closed:
             callback(response)
 
     def _detach(self, handle):
         handle.active = False
         handle.waiting_for_login = False
-        handle.callback = None
         handle.body = None
         handle.sent_token = None
-        self._pending.discard(handle)
         reply = handle.reply
         handle.reply = None
         return reply
@@ -264,7 +270,10 @@ class ApiClient(QObject):
 
     def _abort(self, handle):
         self._check_thread()
-        self._abort_reply(self._detach(handle))
+        reply = self._detach(handle)
+        handle.callback = None
+        self._pending.discard(handle)
+        self._abort_reply(reply)
 
     def _check_thread(self):
         if QThread.currentThread() != self.thread():

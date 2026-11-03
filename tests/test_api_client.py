@@ -640,3 +640,72 @@ def test_unload_closes_nested_owned_auth_dialogs_without_reopening(
                 dialog.close()
                 dialog.deleteLater()
         plugin.api_client.close()
+
+
+@pytest.mark.parametrize(
+    "cleanup",
+    [
+        "handle_abort",
+        "client_close",
+        "owner_destroy",
+        "owner_destroy_after_new_request",
+    ],
+)
+def test_account_cancellation_delivery_remains_abortable_until_callback(
+    client, local_api, wait_for, qgis_app, cleanup
+):
+    from qgis.PyQt import sip
+    from qgis.PyQt.QtCore import QCoreApplication, QEvent
+    from src.main_tab import OsmParserDialogMain
+
+    session, api = client
+    session.set_access_token(token())
+    owner = OsmParserDialogMain(
+        osm_parser=SimpleNamespace(session=session, api_client=api)
+    )
+    label = owner.prompts_label
+    delivered = []
+    widget_errors = []
+    callback_errors = []
+    fresh = []
+
+    def completed(response):
+        delivered.append(response.error)
+        if len(delivered) != 1:
+            try:
+                label.setText(response.message)
+            except RuntimeError as error:
+                widget_errors.append(str(error))
+            return
+        try:
+            if cleanup == "handle_abort":
+                for handle in tuple(owner._handles):
+                    handle.abort()
+            elif cleanup == "client_close":
+                api.close()
+            else:
+                if cleanup == "owner_destroy_after_new_request":
+                    owner._send("GET", "/new-owner-operation", None, fresh.append)
+                    wait_for(lambda: len(local_api.requests) == 3)
+                owner.deleteLater()
+                QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+                nested_tick = []
+                QTimer.singleShot(0, lambda: nested_tick.append(True))
+                wait_for(lambda: bool(nested_tick))
+        except Exception as error:
+            callback_errors.append(error)
+
+    try:
+        for index in range(2):
+            owner._send("GET", f"/held-owner-operation-{index}", None, completed)
+        wait_for(lambda: len(local_api.requests) == 2)
+        session.set_access_token(token("account-b"))
+        assert not callback_errors
+        assert delivered == ["account_changed"]
+        assert not widget_errors
+        assert not fresh
+        assert api.pending_count == 0
+    finally:
+        if not sip.isdeleted(owner):
+            owner.close()
+            owner.deleteLater()

@@ -159,7 +159,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         )
 
     def _send(self, method, path, payload, callback):
-        self._handles[:] = [handle for handle in self._handles if handle.active]
+        self._handles[:] = [handle for handle in self._handles if handle.pending]
         handle = self.api_client.send(method, path, payload, callback)
         self._handles.append(handle)
         return handle
