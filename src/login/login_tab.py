@@ -3,13 +3,11 @@ import plistlib
 import subprocess
 import sys
 
-import requests
 from qgis.PyQt import uic
 from qgis.PyQt.QtCore import QEvent, Qt
 from qgis.PyQt.QtGui import QPixmap
-from qgis.PyQt.QtWidgets import QDialog, QMessageBox
+from qgis.PyQt.QtWidgets import QDialog, QMessageBox, QLabel
 
-from src import API_LINK
 
 
 _QT_KEY = getattr(Qt, "Key", Qt)
@@ -32,6 +30,17 @@ class LoginDialog(QDialog):
         self.label_2.setScaledContents(True)
 
         self.main_ui = main_ui
+        self._request = None
+        self._login_email = None
+        self.error_label = QLabel(self)
+        self.error_label.setWordWrap(True)
+        self.error_label.setTextFormat(_QT_PLAIN_TEXT)
+        self.error_label.setGeometry(30, 510, 421, 65)
+        self.error_label.setStyleSheet("color: #B42318; background: white;")
+        self.finished.connect(self._cleanup)
+        handles = []
+        self._handles = handles
+        self.destroyed.connect(lambda: [handle.abort() for handle in handles])
         self.process_login.clicked.connect(self.check_credentials)
         self.signup_button.clicked.connect(self.handle_signup)
         self._text_replacements = self.load_macos_text_replacements()
@@ -116,7 +125,7 @@ class LoginDialog(QDialog):
     def format_login_error(response):
         """Turn an auth response into a safe, human-readable message."""
         try:
-            payload = response.json()
+            payload = response.data
         except ValueError:
             payload = {}
         if not isinstance(payload, dict):
@@ -134,7 +143,7 @@ class LoginDialog(QDialog):
         if message:
             return str(message)
 
-        if response.status_code in {400, 401, 403}:
+        if response.status in {400, 401, 403}:
             return "The email or password is incorrect. Check your details and try again."
 
         return "Unable to log in right now. Please try again."
@@ -176,37 +185,53 @@ class LoginDialog(QDialog):
         else:
             self.show()
 
+
     def check_credentials(self):
-        self.expand_username_replacement()
-        login_data = {"email": self.username.text().strip(), "password": self.password.text()}
-
-        auth_url = f'{API_LINK}/public/auth/login'
-
-        try:
-            result = requests.post(auth_url, json=login_data, timeout=30)
-        except requests.RequestException as error:
-            self.show_login_error(str(error), self.message_box_icon("Critical"))
+        if self._request and self._request.active:
             return
+        self.expand_username_replacement()
+        self._login_email = self.username.text().strip()
+        self.process_login.setEnabled(False)
+        self.error_label.clear()
+        self._request = self.main_ui.api_client.send(
+            "POST",
+            "/public/auth/login",
+            {"email": self._login_email, "password": self.password.text()},
+            self._login_finished,
+        )
+        self._handles.append(self._request)
+        self.password.clear()
 
-        if result.status_code == 200:
+
+    def _login_finished(self, result):
+        self._request = None
+        self._handles.clear()
+        self.process_login.setEnabled(True)
+        if result.ok and isinstance(result.data, dict):
             try:
-                access_token = result.json().get("access_token")
+                self.main_ui.session.set_access_token(result.data.get("access_token"))
             except ValueError as error:
-                self.show_login_error(
-                    f"Invalid server response: {error}",
-                    self.message_box_icon("Critical"),
-                )
+                self.error_label.setText(str(error))
                 return
-
-            if not access_token:
-                self.show_login_error(
-                    "The server did not return an access token.",
-                    self.message_box_icon("Critical"),
-                )
-                return
-
-            self.main_ui.bearer_token = access_token
-            self.main_ui.user_email = login_data["email"]
+            self.main_ui.user_email = self._login_email
+            if getattr(self.main_ui, "main_dlg", None) is not None:
+                self.main_ui.main_dlg.set_account_email(self._login_email)
             self.accept()
         else:
-            self.show_login_error(self.format_login_error(result))
+            self.error_label.setText(self.format_login_error(result))
+
+
+    def _cleanup(self, result):
+        if not result:
+            self.main_ui.session.cancel_login()
+        if self._request:
+            self._request.abort()
+            self._request = None
+        self._handles.clear()
+        self.password.clear()
+
+
+    def closeEvent(self, event):
+        self._cleanup(0)
+        super().closeEvent(event)
+

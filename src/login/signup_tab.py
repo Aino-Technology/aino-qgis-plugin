@@ -34,6 +34,7 @@ class SignupDialog(QtWidgets.QDialog):
         self.hide()
         login_dialog = LoginDialog(self.main_ui)
         if exec_dialog(login_dialog):
-            self.main_ui.user_logged_in = True
             login_dialog.hide()
             self.accept()
+        else:
+            self.show()

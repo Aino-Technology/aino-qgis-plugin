@@ -4,8 +4,10 @@ from qgis.PyQt.QtWidgets import QAction
 
 # Initialize Qt resources from file resources.py
 from .resources import *
+# Import the code for the dialog
+# from .osm_parser_dialog import OsmParserDialogStart, OsmParserDialogMain
+
 import os.path
-import pathlib
 import sys
 
 plugin_dir = os.path.dirname(__file__)
@@ -13,15 +15,18 @@ plugin_dir = os.path.dirname(__file__)
 if plugin_dir not in sys.path:
     sys.path.insert(0, plugin_dir)
 
+from src import API_LINK
+from src.api_client import ApiClient
+from src.session import Session
 from src.login.login_tab import LoginDialog
-from src.main_tab import OsmParserDialogMain
 from src.login import exec_dialog
+from src.main_tab import OsmParserDialogMain
 
 
 class OsmParser:
     """QGIS Plugin Implementation."""
 
-    def __init__(self, iface):
+    def __init__(self, iface, api_origin=API_LINK):
         """Constructor.
 
         :param iface: An interface instance that will be passed to this class
@@ -36,7 +41,7 @@ class OsmParser:
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
         # initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
+        locale = (QSettings().value('locale/userLocale') or 'en')[0:2]
         locale_path = os.path.join(
             self.plugin_dir,
             'i18n',
@@ -54,9 +59,33 @@ class OsmParser:
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
         self.first_start = None
-        self.user_logged_in = False
-        self.bearer_token = None
         self.user_email = None
+        self.session = Session()
+        self.api_client = ApiClient(self.session, api_origin)
+        self.session.login_required.connect(self._require_login)
+        self._login_dialog = None
+
+    @property
+    def user_logged_in(self):
+        return bool(self.session.access_token)
+
+    @property
+    def bearer_token(self):
+        return self.session.access_token
+
+    def _require_login(self):
+        if self._login_dialog is None:
+            self._login_dialog = LoginDialog(self)
+            self._login_dialog.finished.connect(self._login_closed)
+            self._login_dialog.open()
+        self._login_dialog.raise_()
+        self._login_dialog.activateWindow()
+
+    def _login_closed(self, result):
+        dialog = self._login_dialog
+        self._login_dialog = None
+        if dialog is not None:
+            dialog.deleteLater()
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -162,6 +191,11 @@ class OsmParser:
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
+        self.api_client.close()
+        for dialog in (self._login_dialog, self.start_dlg, self.main_dlg):
+            if dialog is not None:
+                dialog.close()
+        self.session.clear()
         for action in self.actions:
             self.iface.removePluginMenu(
                 self.tr(u'&OSM Parser'),
@@ -177,15 +211,14 @@ class OsmParser:
             self.first_start = False
             self.main_dlg = OsmParserDialogMain(osm_parser=self)
 
+        # show the dialog
         if not self.user_logged_in:
             login_dialog = LoginDialog(self)
             result = exec_dialog(login_dialog)
 
             if result:
-                self.user_logged_in = True
-                self.main_dlg.token = self.bearer_token
-                self.main_dlg.set_account_email(self.user_email)
                 self.main_dlg.update_interface_with_restrictions_start()
+                self.main_dlg.set_account_email(self.user_email)
                 self.main_dlg.show()
 
         else:

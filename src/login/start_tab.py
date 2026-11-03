@@ -37,9 +37,10 @@ class OsmParserDialogStart(QtWidgets.QDialog, FORM_CLASS_start):
         self.hide()
         login_dialog = LoginDialog(self.main_ui)
         if exec_dialog(login_dialog):
-            self.main_ui.user_logged_in = True
             login_dialog.hide()
             self.accept()
+        else:
+            self.show()
 
     def handle_signup(self):
         self.hide()
@@ -47,6 +48,7 @@ class OsmParserDialogStart(QtWidgets.QDialog, FORM_CLASS_start):
         webbrowser.open(auth_url, new=0, autoraise=True)
         signup_dialog = SignupDialog(self.main_ui)
         if exec_dialog(signup_dialog):
-            self.main_ui.user_logged_in = True
             signup_dialog.hide()
             self.accept()
+        else:
+            self.show()
