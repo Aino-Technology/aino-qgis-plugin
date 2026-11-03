@@ -8,6 +8,7 @@ from osgeo import gdal, ogr, osr
 from src.project_sync.managed import (
     GEOMETRY_TYPES,
     encode,
+    field_marker,
     geometry_from_json,
     geometry_json,
     loads,
@@ -159,6 +160,7 @@ def _build_storage(path, result, cancelled):
                 }.get(kind, ogr.OFTString)
             )
             definition = ogr.FieldDefn(entry["physical"], type_id)
+            definition.SetComment(field_marker(entry))
             if layer.CreateField(definition) != 0:
                 raise ValueError("Cannot create lossless output field")
         layer.CreateField(ogr.FieldDefn(meta, ogr.OFTString))
@@ -221,6 +223,7 @@ def _build_storage(path, result, cancelled):
             fields=entries,
             feature_metadata=meta,
             internal_fields=["_aino_rowid"],
+            field_lineage=1,
         )
         sidecar = dict(
             mapping=mapping,

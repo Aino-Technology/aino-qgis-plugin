@@ -155,12 +155,22 @@ class ResultDownloader(QObject):
             self._finish(None, str(error))
 
     def _discard(self):
-        if self.file is not None:
-            self.file.close()
+        try:
+            if self.file is not None:
+                try:
+                    self.file.close()
+                except OSError:
+                    pass
+        finally:
             self.file = None
-        if self.temporary:
-            Path(self.temporary).unlink(missing_ok=True)
-            self.temporary = None
+            try:
+                if self.temporary:
+                    try:
+                        Path(self.temporary).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            finally:
+                self.temporary = None
 
     def _downloaded(self, generation):
         if generation != self.generation or self.reply is None:

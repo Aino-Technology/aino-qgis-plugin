@@ -106,7 +106,9 @@ class _LayerStream:
         self.source = QgsVectorLayerFeatureSource(layer)
         self.fields = self.source.fields()
         self.managed = (
-            ManagedCapture(layer) if layer.customProperty(MANAGED_KEY, "") else None
+            ManagedCapture(layer, _field_schema)
+            if layer.customProperty(MANAGED_KEY, "")
+            else None
         )
         self.schema = (
             self.managed.schema if self.managed else _field_schema(self.fields)

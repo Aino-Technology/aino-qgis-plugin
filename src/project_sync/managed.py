@@ -156,8 +156,80 @@ def geometry_from_json(document):
     return geometry
 
 
+def field_marker(entry):
+    return canonical_bytes({"aino_managed_field": 1, "field": entry}).decode()
+
+
+def managed_fields(layer, metadata):
+    originals = {entry["physical"]: entry for entry in metadata["fields"]}
+    fields = layer.fields()
+    internal = {metadata["feature_metadata"], *metadata.get("internal_fields", [])}
+    if any(fields.indexFromName(name) < 0 for name in internal):
+        raise ValueError("Managed storage metadata fields must remain available")
+    resolved = {}
+    claimed = set()
+    unmarked = []
+    for index, field in enumerate(fields):
+        if field.name() in internal:
+            continue
+        try:
+            marker = loads(field.comment()) if field.comment() else None
+        except ValueError:
+            marker = None
+        if not isinstance(marker, dict) or "aino_managed_field" not in marker:
+            unmarked.append((index, field))
+            continue
+        entry = marker.get("field")
+        original = (
+            originals.get(entry.get("physical")) if isinstance(entry, dict) else None
+        )
+        if (
+            type(marker.get("aino_managed_field")) is not int
+            or marker.get("aino_managed_field") != 1
+            or original is None
+            or canonical_bytes(entry) != canonical_bytes(original)
+        ):
+            raise ValueError(f"Invalid managed field lineage: {field.name()}")
+        if entry["physical"] in claimed:
+            raise ValueError(f"Duplicate managed field lineage: {field.name()}")
+        claimed.add(entry["physical"])
+        resolved[index] = entry
+    if not metadata.get("field_lineage"):
+        present = {field.name() for field in fields}
+        missing = set(originals) - present - claimed
+        if missing and any(field.name() not in originals for _, field in unmarked):
+            raise ValueError(
+                "Unmarked legacy managed fields cannot safely distinguish a renamed codec from a new field; retain the original field names"
+            )
+    for index, field in unmarked:
+        original = originals.get(field.name())
+        if original is not None and original["physical"] not in claimed:
+            if metadata.get("field_lineage"):
+                raise ValueError(f"Missing managed field lineage: {field.name()}")
+            claimed.add(original["physical"])
+            resolved[index] = original
+        else:
+            resolved[index] = None
+    logical_names = set()
+    output = []
+    for index in sorted(resolved):
+        field, original = fields[index], resolved[index]
+        name = (
+            original["schema"]["name"]
+            if original and field.name() == original["physical"]
+            else field.name()
+        )
+        if name in logical_names:
+            raise ValueError(
+                f"Ambiguous managed logical field name: {name}; rename the conflicting field"
+            )
+        logical_names.add(name)
+        output.append((index, field, original, name))
+    return output
+
+
 class ManagedCapture:
-    def __init__(self, layer):
+    def __init__(self, layer, schema_builder):
         error = layer.customProperty("aino/managed_edit_error", "")
         if error:
             raise ValueError(error)
@@ -168,24 +240,35 @@ class ManagedCapture:
         self.metadata = loads(layer.customProperty(MANAGED_KEY))
         if self.metadata.get("version") != 1:
             raise ValueError("Unsupported managed output codec version")
-        self.entries = self.metadata["fields"]
+        self.entries = []
+        self.indices = []
+        for index, field, original, name in managed_fields(layer, self.metadata):
+            if original is None:
+                entry = dict(
+                    physical=field.name(),
+                    schema=schema_builder([field])[0],
+                    codec="added",
+                    presence_name=None,
+                )
+            else:
+                entry = {
+                    **original,
+                    "physical": field.name(),
+                    "schema": {**original["schema"], "name": name},
+                    "presence_name": original["schema"]["name"],
+                }
+            self.entries.append(entry)
+            self.indices.append(index)
         self.schema = [entry["schema"] for entry in self.entries]
-        self.indices = [
-            layer.fields().indexFromName(entry["physical"]) for entry in self.entries
-        ]
         self.meta_index = layer.fields().indexFromName(
             self.metadata["feature_metadata"]
         )
-        if min(self.indices + [self.meta_index]) < 0 or len(layer.fields()) != len(
-            self.entries
-        ) + 1 + len(self.metadata.get("internal_fields", [])):
-            raise ValueError(
-                "Managed output schema was changed; restore its mapped fields before synchronization"
-            )
 
     def feature(self, feature, document):
         props = {
-            entry["schema"]["name"]: decode(feature[index], entry)
+            entry["schema"]["name"]: document["properties"][entry["physical"]]
+            if entry["codec"] == "added"
+            else decode(feature[index], entry)
             for entry, index in zip(self.entries, self.indices)
         }
         raw = feature[self.meta_index]
@@ -206,9 +289,14 @@ class ManagedCapture:
             for entry, index in zip(self.entries, self.indices)
             if index in self.edited_fields.get(feature.id(), {})
         }
-        for missing in metadata.get("missing", []):
-            if props.get(missing) is None and missing not in edited:
-                props.pop(missing, None)
+        for entry in self.entries:
+            name = entry["schema"]["name"]
+            if (
+                entry["presence_name"] in metadata.get("missing", [])
+                and props.get(name) is None
+                and name not in edited
+            ):
+                props.pop(name, None)
         document["properties"] = (
             None
             if metadata.get("null_properties")
@@ -237,15 +325,16 @@ class ManagedOutputPresence(QObject):
             buffer = self.layer.editBuffer()
             if buffer is None:
                 return
+            changed = buffer.changedAttributeValues()
+            if not changed:
+                return
             mapping = loads(self.layer.customProperty(MANAGED_KEY))
             names = {
-                self.layer.fields().indexFromName(entry["physical"]): entry["schema"][
-                    "name"
-                ]
-                for entry in mapping["fields"]
+                index: original["schema"]["name"] if original else name
+                for index, field, original, name in managed_fields(self.layer, mapping)
             }
             index = self.layer.fields().indexFromName(mapping["feature_metadata"])
-            for fid, attributes in buffer.changedAttributeValues().items():
+            for fid, attributes in changed.items():
                 edited = {names[key] for key in attributes if key in names}
                 if not edited:
                     continue

@@ -1202,3 +1202,350 @@ def test_unobserved_empty_string_category_has_proven_mapping(qgis_app, tmp_path)
     provenance = json.loads(project.mapLayer(ids[0]).customProperty(PROVENANCE_KEY))
     assert [""] in provenance["class_mapping"]["classes"].values()
     project.clear()
+
+
+def test_added_attribute_is_captured_as_new_snapshot(qgis_app, tmp_path):
+    from qgis.PyQt.QtCore import QMetaType
+    from qgis.core import QgsField
+    from src.project_sync.controller import _output_references
+
+    project = QgsProject()
+    manifest = result()
+    ids = import_result(
+        project,
+        manifest,
+        write(tmp_path, document(GEOMETRIES[0])),
+        reference=reference(),
+    )
+    layer = project.mapLayer(ids[0])
+    provenance = json.loads(layer.customProperty(PROVENANCE_KEY))
+    assert layer.startEditing()
+    assert layer.addAttribute(QgsField("review_note", QMetaType.Type.QString))
+    assert layer.changeAttributeValue(
+        next(layer.getFeatures()).id(),
+        layer.fields().indexFromName("review_note"),
+        "local review",
+    )
+    assert layer.commitChanges()
+    captured = capture_layers(
+        project, ids, str(tmp_path / "added"), reference=reference()
+    )[0]
+    captured["output_provenance"] = provenance
+    assert captured["content_hash"] != provenance["local_content_hash"]
+    assert not _output_references(
+        [captured], "account", manifest["client_project_id"], 17
+    )
+    assert (
+        json.loads(Path(captured["local_path"]).read_text())["features"][0][
+            "properties"
+        ]["review_note"]
+        == "local review"
+    )
+    assert project.write(str(tmp_path / "schema.qgz"))
+    project.clear()
+    assert project.read(str(tmp_path / "schema.qgz"))
+    restored = capture_layers(
+        project, ids, str(tmp_path / "restored"), reference=reference()
+    )[0]
+    assert restored["content_hash"] == captured["content_hash"]
+    project.clear()
+
+
+@pytest.mark.parametrize(
+    "close_fails,unlink_fails", [(True, False), (True, True), (False, True)]
+)
+def test_flush_then_close_failure_notifies_once_and_clears_cleanup(
+    client, tmp_path, monkeypatch, close_fails, unlink_fails
+):
+    from qgis.PyQt.QtNetwork import QNetworkReply
+    from src.results.download import ResultDownloader
+
+    _, api = client
+    downloader = ResultDownloader(api)
+    temporary = tmp_path / "incomplete.partial"
+    temporary.write_bytes(b"partial")
+    replies = []
+
+    class FailedBuffer:
+        closes = 0
+
+        def write(self, data):
+            return len(data)
+
+        def flush(self):
+            raise OSError("original flush ENOSPC")
+
+        def close(self):
+            self.closes += 1
+            if close_fails:
+                raise OSError("secondary close ENOSPC")
+
+    class FinishedReply:
+        def readAll(self):
+            return b""
+
+        def attribute(self, key):
+            return 200
+
+        def rawHeader(self, name):
+            return b"7"
+
+        def error(self):
+            return QNetworkReply.NetworkError.NoError
+
+        def deleteLater(self):
+            pass
+
+    buffer = FailedBuffer()
+    unlink = Path.unlink
+    calls = []
+
+    def cleanup(path, *args, **kwargs):
+        if path == temporary:
+            calls.append(path)
+            if unlink_fails:
+                raise OSError("secondary unlink EACCES")
+        return unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", cleanup)
+    downloader.active = True
+    downloader.callback = lambda *args: replies.append(args)
+    downloader.file = buffer
+    downloader.temporary = str(temporary)
+    downloader.reply = FinishedReply()
+    downloader.received = 7
+    downloader._downloaded(downloader.generation)
+    assert replies == [(None, "original flush ENOSPC")]
+    assert downloader.file is None and downloader.temporary is None
+    assert buffer.closes == 1 and len(calls) == 1
+    assert not downloader.active and not list(tmp_path.glob("*.geojson"))
+    downloader.abort()
+    assert len(replies) == 1 and buffer.closes == 1 and len(calls) == 1
+    downloader.close()
+    downloader.deleteLater()
+
+
+def test_codec_rename_delete_undo_rollback_commit_reopen(qgis_app, tmp_path):
+    from src.project_sync.controller import _output_references
+
+    project = QgsProject()
+    manifest = result()
+    original = document(GEOMETRIES[0])
+    ids = import_result(
+        project, manifest, write(tmp_path, original), reference=reference()
+    )
+    layer = project.mapLayer(ids[0])
+    provenance = json.loads(layer.customProperty(PROVENANCE_KEY))
+    payload_index = logical_index(layer, "data")
+    time_index = logical_index(layer, "time")
+
+    def snapshot(label):
+        return capture_layers(
+            project, ids, str(tmp_path / label), reference=reference()
+        )[0]
+
+    assert layer.startEditing()
+    layer.beginEditCommand("Rename JSON and remove time")
+    assert layer.renameAttribute(payload_index, "review_payload")
+    assert layer.deleteAttribute(time_index)
+    layer.endEditCommand()
+    edited = snapshot("pending")
+    expected_schema = [
+        dict(item, name="review_payload") if item["name"] == "data" else item
+        for item in manifest["field_schema"]
+        if item["name"] != "time"
+    ]
+    assert edited["field_schema"] == expected_schema
+    props = json.loads(Path(edited["local_path"]).read_text())["features"][0][
+        "properties"
+    ]
+    assert props["review_payload"] == original["features"][0]["properties"]["data"]
+    assert "data" not in props and "time" not in props
+    layer.undoStack().undo()
+    assert snapshot("undone")["content_hash"] == provenance["local_content_hash"]
+    layer.undoStack().redo()
+    assert snapshot("redone")["content_hash"] == edited["content_hash"]
+    assert layer.rollBack()
+    assert snapshot("rollback")["content_hash"] == provenance["local_content_hash"]
+    assert layer.startEditing()
+    assert layer.renameAttribute(logical_index(layer, "data"), "review_payload")
+    assert layer.deleteAttribute(logical_index(layer, "time"))
+    assert layer.commitChanges()
+    committed = snapshot("committed")
+    assert committed["field_schema"] == expected_schema
+    assert committed["content_hash"] == edited["content_hash"]
+    committed["output_provenance"] = provenance
+    assert not _output_references(
+        [committed], "account", manifest["client_project_id"], 17
+    )
+    assert project.write(str(tmp_path / "renamed.qgz"))
+    project.clear()
+    assert project.read(str(tmp_path / "renamed.qgz"))
+    reopened = snapshot("reopened")
+    assert reopened["content_hash"] == committed["content_hash"]
+    assert reopened["field_schema"] == expected_schema
+    project.clear()
+
+
+def test_renamed_missing_codec_explicit_null_keeps_presence(qgis_app, tmp_path):
+    project = QgsProject()
+    original = document(GEOMETRIES[0])
+    del original["features"][0]["properties"]["data"]
+    ids = import_result(
+        project, result(), write(tmp_path, original), reference=reference()
+    )
+    layer = project.mapLayer(ids[0])
+    assert layer.startEditing()
+    assert layer.renameAttribute(logical_index(layer, "data"), "payload")
+    before = capture_layers(
+        project, ids, str(tmp_path / "renamed"), reference=reference()
+    )[0]
+    assert (
+        "payload"
+        not in json.loads(Path(before["local_path"]).read_text())["features"][0][
+            "properties"
+        ]
+    )
+    assert layer.changeAttributeValue(
+        next(layer.getFeatures()).id(), layer.fields().indexFromName("payload"), None
+    )
+    assert layer.commitChanges()
+    assert project.write(str(tmp_path / "presence.qgz"))
+    project.clear()
+    assert project.read(str(tmp_path / "presence.qgz"))
+    captured = capture_layers(
+        project, ids, str(tmp_path / "after"), reference=reference()
+    )[0]
+    props = json.loads(Path(captured["local_path"]).read_text())["features"][0][
+        "properties"
+    ]
+    assert props["payload"] is None and "data" not in props
+    project.clear()
+
+
+def test_empty_output_added_schema_changes_hash_and_reference(qgis_app, tmp_path):
+    from qgis.PyQt.QtCore import QMetaType
+    from qgis.core import QgsField
+    from src.project_sync.controller import _output_references
+
+    project = QgsProject()
+    manifest = result()
+    manifest["field_schema"] = []
+    ids = import_result(
+        project,
+        manifest,
+        write(tmp_path, dict(type="FeatureCollection", features=[])),
+        reference=reference(),
+    )
+    layer = project.mapLayer(ids[0])
+    provenance = json.loads(layer.customProperty(PROVENANCE_KEY))
+    assert layer.startEditing()
+    assert layer.addAttribute(QgsField("review_note", QMetaType.Type.QString))
+    assert layer.commitChanges()
+    assert project.write(str(tmp_path / "empty-schema.qgz"))
+    project.clear()
+    assert project.read(str(tmp_path / "empty-schema.qgz"))
+    captured = capture_layers(
+        project, ids, str(tmp_path / "added"), reference=reference()
+    )[0]
+    assert captured["feature_count"] == 0
+    assert captured["field_schema"][0]["name"] == "review_note"
+    assert captured["content_hash"] != provenance["local_content_hash"]
+    captured["output_provenance"] = provenance
+    assert not _output_references(
+        [captured], "account", manifest["client_project_id"], 17
+    )
+    project.clear()
+
+
+@pytest.mark.parametrize(
+    "bad_field", ["logical_collision", "duplicate_marker", "mismatched_marker"]
+)
+def test_managed_schema_ambiguity_is_explicit(qgis_app, tmp_path, bad_field):
+    from qgis.PyQt.QtCore import QMetaType
+    from qgis.core import QgsField
+
+    project = QgsProject()
+    ids = import_result(
+        project,
+        result(),
+        write(tmp_path, document(GEOMETRIES[0])),
+        reference=reference(),
+    )
+    layer = project.mapLayer(ids[0])
+    original = layer.fields()[logical_index(layer, "data")]
+    added = QgsField(
+        "Name" if bad_field == "logical_collision" else "duplicate",
+        QMetaType.Type.QString,
+    )
+    if bad_field == "duplicate_marker":
+        added.setComment(original.comment())
+    if bad_field == "mismatched_marker":
+        marker = json.loads(original.comment())
+        marker["field"]["codec"] = "invalid-codec"
+        added.setComment(json.dumps(marker))
+    assert layer.startEditing()
+    assert layer.addAttribute(added)
+    assert layer.commitChanges()
+    pattern = {
+        "logical_collision": "Ambiguous managed logical field name",
+        "duplicate_marker": "Duplicate managed field lineage",
+        "mismatched_marker": "Invalid managed field lineage",
+    }[bad_field]
+    with pytest.raises(ValueError, match=pattern):
+        capture_layers(project, ids, str(tmp_path / "invalid"), reference=reference())
+    assert layer.fields().indexFromName(added.name()) >= 0
+    project.clear()
+
+
+def test_unmarked_legacy_mapping_safe_until_codec_rename(qgis_app, tmp_path, wait_for):
+    from osgeo import ogr
+    from qgis.PyQt import sip
+    from qgis.PyQt.QtCore import QMetaType
+    from qgis.core import QgsField
+    from src.results.importer import ImportJob
+    from src.results.storage import build_storage
+
+    project = QgsProject()
+    manifest = result()
+    storage = build_storage(write(tmp_path, document(GEOMETRIES[0])), manifest)
+    for part in storage:
+        part["mapping"].pop("field_lineage")
+        with ogr.ExceptionMgr():
+            dataset = ogr.Open(part["path"], 1)
+            native = dataset.GetLayer(0)
+            for index in range(len(part["mapping"]["fields"])):
+                original = native.GetLayerDefn().GetFieldDefn(index)
+                definition = ogr.FieldDefn(original.GetName(), original.GetType())
+                definition.SetComment("")
+                assert (
+                    native.AlterFieldDefn(index, definition, ogr.ALTER_COMMENT_FLAG)
+                    == 0
+                )
+            native = None
+            dataset = None
+    finished = []
+    job = ImportJob(project, manifest, storage, reference())
+    job.finished.connect(finished.append)
+    job.start()
+    wait_for(lambda: finished)
+    ids = finished[0]
+    layer = project.mapLayer(ids[0])
+    initial = capture_layers(
+        project, ids, str(tmp_path / "initial"), reference=reference()
+    )[0]
+    assert initial["field_schema"] == manifest["field_schema"]
+    assert layer.startEditing()
+    assert layer.addAttribute(QgsField("review_note", QMetaType.Type.QString))
+    assert layer.commitChanges()
+    added = capture_layers(
+        project, ids, str(tmp_path / "added"), reference=reference()
+    )[0]
+    assert added["field_schema"][-1]["name"] == "review_note"
+    assert layer.startEditing()
+    assert layer.renameAttribute(logical_index(layer, "data"), "legacy_payload")
+    assert layer.commitChanges()
+    with pytest.raises(ValueError, match="Unmarked legacy managed fields"):
+        capture_layers(project, ids, str(tmp_path / "ambiguous"), reference=reference())
+    sip.delete(job)
+    project.clear()
