@@ -1,4 +1,6 @@
 import copy
+import json
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -914,3 +916,130 @@ def test_first_action_validation_rejection_releases_only_rejected_body(setup):
         }
     )
     assert api.calls[-1][2]["request_id"] != rejected["request_id"]
+
+
+def test_screening_report_candidates_journal_reconstruction_and_import_handoff(
+    setup, monkeypatch
+):
+    from src.results.controller import ResultController
+    from tests.test_result_import import result
+    from tests.test_style_conversion import reference
+
+    controller, api, clock, journal, project = setup
+    task = str(uuid4())
+    report = json.loads(
+        (Path(__file__).parent / "fixtures/screening_report.json").read_text()
+    )
+    manifest = {
+        "task_id": task,
+        "layers": [{**result(), "task_id": task}],
+        "report": report,
+    }
+    importer = ResultController(api, journal, project)
+    deliveries, downloads, notifications = [], [], []
+    monkeypatch.setattr(
+        importer.downloader, "download_results", lambda *args: downloads.append(args)
+    )
+
+    def handoff(value):
+        assert (
+            journal.load(project_identity(project), "account-a")["analysis"]["results"]
+            == manifest
+        )
+        deliveries.append(value)
+        importer.start(value, 17, reference())
+
+    def changed(value):
+        if value.get("results"):
+            assert (
+                journal.load(project_identity(project), "account-a")["analysis"][
+                    "results"
+                ]
+                == manifest
+            )
+            notifications.append(value)
+
+    controller.results_ready.connect(handoff)
+    controller.changed.connect(changed)
+    controller.restore(task)
+    identity = project_identity(project)
+    journal.update_sections(
+        identity, "account-a", sync={"phase": "ready"}, datasets={"retained": True}
+    )
+    api.answer(state(task, status="completed", results_ready=True))
+    api.answer(manifest)
+    recovered = None
+    try:
+        assert deliveries == [manifest]
+        assert notifications and downloads[0][1]["report"] == report
+        assert downloads[0][1]["layers"][0]["dataset_id"] == 71
+        saved = journal.load(identity, "account-a")
+        assert saved["imports"]["tasks"][task]["status"] == "pending"
+        assert saved["sync"] == {"phase": "ready"} and saved["datasets"] == {
+            "retained": True
+        }
+        controller.close()
+        recovered = AnalysisController(
+            api,
+            journal=RecoveryJournal(journal.directory),
+            project=project,
+            scheduler=Clock(),
+        )
+        recovered.results_ready.connect(handoff)
+        recovered.restore()
+        assert deliveries == [manifest, manifest]
+        recovered._results()
+        api.answer(manifest)
+        assert deliveries == [manifest, manifest, manifest]
+        assert len(downloads) == 1
+        assert journal.load(identity, "account-a")["analysis"]["results"] == manifest
+    finally:
+        importer.close()
+        sip.delete(importer)
+        if recovered is not None:
+            recovered.close()
+            sip.delete(recovered)
+
+
+@pytest.mark.parametrize(
+    "secret",
+    [
+        "password",
+        "token",
+        "access_token",
+        "api_key",
+        "upload_token",
+        "authorization",
+        "location",
+        "upload_url",
+    ],
+)
+@pytest.mark.parametrize("section", ["session", "sync", "analysis", "imports"])
+def test_journal_rejects_transport_credentials_outside_report(
+    tmp_path, secret, section
+):
+    journal = RecoveryJournal(tmp_path)
+    identity = str(uuid4())
+    journal.save(identity, "account-a", {"sync": {"phase": "ready"}})
+    with pytest.raises(ValueError, match="cannot be journaled"):
+        journal.update_sections(
+            identity,
+            "account-a",
+            **{section: {secret: "https://storage.invalid/opaque-session-token"}},
+        )
+    assert journal.load(identity, "account-a") == {"sync": {"phase": "ready"}}
+
+
+def test_journal_report_property_names_are_data_and_not_transport(tmp_path):
+    journal = RecoveryJournal(tmp_path)
+    identity = str(uuid4())
+    report = {
+        "properties": {
+            "location": "North district",
+            "token": "an ordinary attribute",
+            "password": "field label",
+        }
+    }
+    state = {"analysis": {"results": {"report": report}}}
+    journal.save(identity, "account-a", state)
+    assert journal.load(identity, "account-a") == state

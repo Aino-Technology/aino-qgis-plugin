@@ -128,23 +128,26 @@ def project_identity(project, create=True):
     return replace_project_identity(project)
 
 
-def _check_secrets(value):
+def _check_secrets(value, path=()):
+    if path == ("analysis", "results", "report"):
+        return
     if isinstance(value, dict):
         for key, item in value.items():
             if key.lower() in {
                 "password",
                 "token",
                 "access_token",
+                "api_key",
                 "upload_token",
                 "authorization",
                 "location",
                 "upload_url",
             }:
                 raise ValueError("Credentials and transport URLs cannot be journaled")
-            _check_secrets(item)
+            _check_secrets(item, (*path, key))
     elif isinstance(value, list):
         for item in value:
-            _check_secrets(item)
+            _check_secrets(item, (*path, "[]"))
 
 
 class RecoveryJournal:

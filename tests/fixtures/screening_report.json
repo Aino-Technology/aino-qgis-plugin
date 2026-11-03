@@ -1,0 +1,41 @@
+{
+  "executive_summary": "One candidate meets the screening criteria.",
+  "recommendation": "Review the North district site.",
+  "kpi": [
+    {
+      "indicator": "Area",
+      "threshold": "> 1000 m²"
+    }
+  ],
+  "top_candidates": [
+    {
+      "rank": 1,
+      "score": 87,
+      "location": "North district",
+      "key_reason": "Within the selected area",
+      "feature_id": "1"
+    }
+  ],
+  "risks": [
+    {
+      "risk": "Verify access",
+      "severity": "low"
+    }
+  ],
+  "conclusion": "Proceed to site verification.",
+  "methodology": {
+    "layers": [
+      "Sites"
+    ],
+    "filters": [
+      "Inside AOI"
+    ],
+    "score_formula": "access + area"
+  },
+  "final_dataset_id": 71,
+  "final_dataset_ids": [
+    71
+  ],
+  "parcels_available": true,
+  "parcels_unavailable_reason": null
+}
