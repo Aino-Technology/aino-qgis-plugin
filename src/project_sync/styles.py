@@ -102,8 +102,11 @@ def _class_id(definition):
     return "c_" + hashlib.sha256(canonical_bytes(definition)).hexdigest()[:24]
 
 
-def _free_field(fields):
-    names = {field.name().lower().upper() for field in fields}
+def _free_field(fields, reserved=()):
+    names = {
+        name.lower().upper()
+        for name in [*(field.name() for field in fields), *reserved]
+    }
     name, suffix = "aino_class", 0
     while name.lower().upper() in names:
         suffix += 1
@@ -194,7 +197,7 @@ def _appearance(symbol, opacity, context, zoom, grouped, warnings):
 class RendererCapture:
     """Cloned renderer with native feature membership and stable transport classes."""
 
-    def __init__(self, layer, reference):
+    def __init__(self, layer, reference, reserved_fields=()):
         require_gui_thread()
         self.renderer = layer.renderer().clone()
         self.context = reference.context(self.renderer)
@@ -232,7 +235,7 @@ class RendererCapture:
                 if isinstance(self.renderer, QgsCategorizedSymbolRenderer)
                 else "graduated"
             )
-            field = _free_field(self.fields)
+            field = _free_field(self.fields, reserved_fields)
             self.metadata.update(
                 kind=kind, field=field, source_field=self.renderer.classAttribute()
             )

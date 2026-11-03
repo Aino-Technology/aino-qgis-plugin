@@ -18,6 +18,7 @@ from qgis.core import (
 )
 
 from .area import require_gui_thread
+from .managed import MANAGED_KEY, ManagedCapture
 from .styles import RendererCapture, canonical_bytes
 
 
@@ -104,8 +105,27 @@ class _LayerStream:
             )
         self.source = QgsVectorLayerFeatureSource(layer)
         self.fields = self.source.fields()
-        self.schema = _field_schema(self.fields)
-        self.renderer = RendererCapture(layer, reference)
+        self.managed = (
+            ManagedCapture(layer) if layer.customProperty(MANAGED_KEY, "") else None
+        )
+        self.schema = (
+            self.managed.schema if self.managed else _field_schema(self.fields)
+        )
+        self.renderer = RendererCapture(
+            layer,
+            reference,
+            reserved_fields=[field["name"] for field in self.schema]
+            if self.managed
+            else (),
+        )
+        if self.managed:
+            logical_names = {
+                entry["physical"]: entry["schema"]["name"]
+                for entry in self.managed.entries
+            }
+            source_field = self.renderer.metadata.get("source_field")
+            if source_field in logical_names:
+                self.renderer.metadata["source_field"] = logical_names[source_field]
         self.class_field = self.renderer.metadata.get("field")
         if self.class_field:
             self.schema.append(
@@ -158,6 +178,7 @@ class _LayerStream:
         self.sidecar = None
         self.complete = False
         self.count = 0
+        self.class_values = {}
         self.digest = hashlib.sha256()
 
     def _write(self, data):
@@ -199,6 +220,17 @@ class _LayerStream:
         document = json.loads(self.exporter.exportFeature(copied))
         document.pop("id", None)
         document["properties"] = properties
+        if self.managed:
+            document = self.managed.feature(copied, document)
+            if self.class_field:
+                document["properties"] = document["properties"] or {}
+                document["properties"][self.class_field] = classification
+                values = self.class_values.setdefault(classification, {})
+                name = self.managed.metadata.get("server_class_field")
+                if name:
+                    value = document["properties"].get(name)
+                    if not isinstance(value, (dict, list)):
+                        values.setdefault(name, {})[canonical_bytes(value)] = value
         self._write((b"," if self.count else b"") + canonical_bytes(document))
         self.count += 1
         return True
@@ -221,6 +253,11 @@ class _LayerStream:
             content_hash=self.digest.hexdigest(),
             feature_count=self.count,
         )
+        if self.managed:
+            self.output["managed_class_values"] = {
+                key: {name: list(values.values()) for name, values in fields.items()}
+                for key, fields in self.class_values.items()
+            }
         self.complete = True
         self.iterator.close()
         self.renderer.close()

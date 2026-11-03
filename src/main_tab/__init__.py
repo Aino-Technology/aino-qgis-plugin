@@ -9,6 +9,7 @@ from qgis.core import QgsProject, QgsVectorLayer
 from qgis.gui import QgsMapToolEmitPoint
 
 from src.analysis.controller import AnalysisController
+from src.results.controller import ResultController
 from src.analysis.actions import ActionPanel, report_text
 from src.analysis.polling import TERMINAL
 from src.project_sync.area import capture_area
@@ -393,6 +394,12 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             project=QgsProject.instance(),
             parent=self,
         )
+        self.result_controller = ResultController(
+            self.api_client,
+            journal=self.sync_controller.journal,
+            project=QgsProject.instance(),
+            parent=self,
+        )
         self.analysis_tab = QtWidgets.QWidget(self)
         layout = QtWidgets.QVBoxLayout(self.analysis_tab)
         self.analysis_stage = QtWidgets.QLabel(
@@ -417,6 +424,8 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.analysis_resume = QtWidgets.QPushButton(
             "Resume / retry saved request", self
         )
+        self.results_retry = QtWidgets.QPushButton("Retry saved result import", self)
+        self.results_retry.setEnabled(False)
         self.analysis_cancel = QtWidgets.QPushButton("Cancel analysis", self)
         self.analysis_link = QtWidgets.QPushButton("Open in Aino", self)
         self.analysis_link.setEnabled(False)
@@ -429,6 +438,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             scroll,
             self.analysis_report,
             self.analysis_resume,
+            self.results_retry,
             self.analysis_cancel,
             self.analysis_link,
         ):
@@ -439,6 +449,14 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.analysis_controller.results_ready.connect(self._analysis_results)
         self.analysis_actions.submitted.connect(self._submit_analysis_action)
         self.analysis_resume.clicked.connect(self._resume_analysis)
+        self.results_retry.clicked.connect(self._retry_results)
+        self.result_controller.status.connect(self.analysis_stage.setText)
+        self.result_controller.failed.connect(
+            lambda message: self.results_retry.setEnabled(True)
+        )
+        self.result_controller.completed.connect(
+            lambda ids: self.results_retry.setEnabled(False)
+        )
         self.analysis_cancel.clicked.connect(self._cancel_analysis)
         self.analysis_link.clicked.connect(self._open_analysis)
         self._resume_analysis()
@@ -452,6 +470,9 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self.analysis_status.setText(str(error))
 
     def _analysis_changed(self, state):
+        if not state or state.get("results") is None:
+            self.result_controller.pause()
+            self.results_retry.setEnabled(False)
         latest = state.get("latest") or {}
         rejection = state.get("last_rejection") or {}
         self.analysis_rejection.setText(
@@ -540,6 +561,28 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             else "Analysis completed — text result"
         )
         self.analysis_results_ready.emit(manifest)
+        self._retry_results()
+
+    def _retry_results(self):
+        state = self.analysis_controller.state
+        manifest = state.get("results")
+        if manifest is None:
+            return
+        try:
+            project_id = (state.get("start_intent") or {}).get("project_id") or (
+                state.get("latest") or {}
+            ).get("project_id")
+            self.results_retry.setEnabled(False)
+            self.result_controller.start(
+                manifest,
+                project_id,
+                RenderReference(self.main_ui.iface.mapCanvas().mapSettings())
+                if manifest["layers"]
+                else None,
+            )
+        except (ValueError, OSError) as error:
+            self.analysis_stage.setText("Import interrupted: " + str(error))
+            self.results_retry.setEnabled(True)
 
     def _submit_analysis_action(self, action):
         try:
@@ -663,6 +706,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self._resume_sync()
 
     def closeEvent(self, event):
+        self.result_controller.pause()
         self.analysis_controller.pause()
         self.sync_controller.pause()
         self._discard_capture()
