@@ -1,23 +1,21 @@
 import json
 import os
-import re
 import tempfile
 
 from qgis.PyQt import QtWidgets, uic
-from qgis.PyQt.QtCore import QVariant, QDate, Qt, pyqtSignal
+from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import QMessageBox
 from qgis.core import QgsProject, QgsVectorLayer
 from qgis.gui import QgsMapToolEmitPoint
 
 from src.project_sync.area import capture_area
 from src.project_sync.layers import SnapshotCapture
+from src.project_sync.controller import SyncController
 from src.project_sync.styles import RenderReference
 
 from .helpers import (
     add_data,
     update_scroll_area,
-    get_selected_options,
-    update_labels,
     toggle_button_state,
 )
 
@@ -31,6 +29,7 @@ FORM_CLASS_main, _ = uic.loadUiType(
 
 class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
     inputs_prepared = pyqtSignal(dict, list)
+    snapshot_ready = pyqtSignal(dict)
 
     def __init__(self, parent=None, osm_parser=None):
         super(OsmParserDialogMain, self).__init__(parent)
@@ -46,6 +45,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.setupUi(self)
         self.setup_account_controls()
         self._setup_inputs()
+        self._setup_sync()
 
         self.go_button.clicked.connect(self.start_osm_thread)
         self.upload_button.clicked.connect(self.upload_process)
@@ -169,6 +169,8 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self._capture_directory.cleanup()
             self._capture_directory = None
         self.prepared_inputs = None
+        if hasattr(self, "sync_inputs_button"):
+            self.sync_inputs_button.setEnabled(False)
         self.preview_inputs_button.setEnabled(True)
         self.cancel_capture_button.setEnabled(False)
         self.capture_status.setText(
@@ -194,8 +196,10 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             area = capture_area(mode, canvas, layers, center, self.radius_input.value())
             reference = RenderReference(canvas.mapSettings())
             if directory is None:
+                previews = self.sync_controller.journal.directory / "previews"
+                previews.mkdir(parents=True, exist_ok=True)
                 self._capture_directory = tempfile.TemporaryDirectory(
-                    prefix="aino-inputs-"
+                    prefix="aino-inputs-", dir=previews
                 )
                 directory = self._capture_directory.name
             job = SnapshotCapture(
@@ -252,105 +256,127 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.capture_status.setToolTip(message)
         self.preview_inputs_button.setEnabled(True)
         self.cancel_capture_button.setEnabled(False)
+        if hasattr(self, "sync_inputs_button"):
+            self.sync_inputs_button.setEnabled(True)
+            self.sync_inputs_button.setText(
+                "Continue with style simplifications and sync"
+                if warnings
+                else "Sync prepared inputs"
+            )
         self.inputs_prepared.emit(area, outputs)
 
     def _inputs_failed(self, message):
         self._discard_capture()
         self.capture_status.setText(f"Cannot prepare inputs: {message}")
 
-    def upload_next(self):
-        project_link = self.project_link_text.text()
-        pattern = r"https://beta\.aino\.world/project/(\d+)"
-        match = re.search(pattern, project_link)
-        if match:
-            self.project_id = match.group(1)
-            update_scroll_area(self)
+    def _setup_sync(self):
+        self.sync_controller = SyncController(
+            self.api_client,
+            journal=getattr(self.main_ui, "recovery_journal", None),
+            parent=self,
+        )
+        self.sync_inputs_button = QtWidgets.QPushButton("Sync prepared inputs", self)
+        self.sync_inputs_button.setEnabled(False)
+        self.resume_sync_button = QtWidgets.QPushButton("Resume synchronization", self)
+        self.relink_button = QtWidgets.QPushButton("Retry existing link", self)
+        self.detach_button = QtWidgets.QPushButton("Detach and create a new link", self)
+        self.sync_notice = QtWidgets.QLabel(self)
+        self.sync_notice.setWordWrap(True)
+        self.sync_status = QtWidgets.QLabel(self)
+        self.sync_status.setWordWrap(True)
+        for widget in (
+            self.sync_inputs_button,
+            self.resume_sync_button,
+            self.relink_button,
+            self.detach_button,
+            self.sync_notice,
+            self.sync_status,
+        ):
+            self.inputs_layout.addWidget(widget)
+        self.sync_inputs_button.clicked.connect(self._sync_prepared)
+        self.resume_sync_button.clicked.connect(self._resume_sync)
+        self.relink_button.clicked.connect(
+            lambda: self.sync_controller.retry_link(QgsProject.instance())
+        )
+        self.detach_button.clicked.connect(self._detach_sync)
+        self.sync_controller.status.connect(self.sync_status.setText)
+        self.sync_controller.notice.connect(self.sync_notice.setText)
+        self.sync_controller.failed.connect(self._sync_failed)
+        self.sync_controller.relink_required.connect(self._sync_relink)
+        self.sync_controller.ready.connect(self._sync_ready)
+        self.relink_button.hide()
+        self.detach_button.hide()
+        self.removeTab(self.indexOf(self.upload_tab))
+        QgsProject.instance().cleared.connect(self._project_sync_cleared)
+        QgsProject.instance().readProject.connect(lambda *args: self._resume_sync())
+        self.session.authenticated.connect(self._resume_sync)
+        self._resume_sync()
 
-        else:
-            QMessageBox.critical(self, "", "Please, provide project link")
+    def _sync_prepared(self):
+        if self.prepared_inputs is None:
+            return
+        area, outputs = self.prepared_inputs
+        try:
+            self.sync_controller.prepare(
+                QgsProject.instance(), outputs, None, context={"area": area}
+            )
+            self.sync_inputs_button.setEnabled(False)
+            self._discard_capture()
+        except (ValueError, OSError) as error:
+            self._sync_failed(str(error))
+
+    def _resume_sync(self):
+        if not self.session.account_id:
+            return
+        try:
+            self.sync_controller.restore(QgsProject.instance())
+        except (ValueError, OSError) as error:
+            self._sync_failed(str(error))
+
+    def _sync_failed(self, message):
+        self.sync_status.setText(message)
+
+    def _sync_relink(self, message):
+        self.sync_status.setText(
+            message + " Restore access and retry, or explicitly create a new link."
+        )
+        self.relink_button.show()
+        self.detach_button.show()
+
+    def _detach_sync(self):
+        answer = QMessageBox.question(
+            self,
+            "Create a separate Aino project?",
+            "The next synchronization will create a new Aino link. Existing analysis and recovery records will remain with the previous link.",
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.sync_controller.detach(QgsProject.instance())
+            self.project_id = None
+            self.project_link_text.clear()
+            self.relink_button.hide()
+            self.detach_button.hide()
+            self._discard_capture()
+            self.sync_status.setText("Detached. Prepare inputs to create a new link.")
+
+    def _sync_ready(self, snapshot):
+        self.project_id = snapshot["project_id"]
+        self.project_link_text.setText(
+            self.sync_controller.state["binding"]["project_url"]
+        )
+        self.sync_status.setText("Snapshot ready for analysis.")
+        self.detach_button.show()
+        self.snapshot_ready.emit(snapshot)
+
+    def _project_sync_cleared(self):
+        self.sync_controller.pause()
+        self.sync_controller.state = None
+        self.project_id = None
+        self.project_link_text.clear()
+        self.sync_status.clear()
 
     def upload_process(self):
-        project_link = self.project_link_text.text()
-        pattern = r"https://beta\.aino\.world/project/(\d+)"
-        match = re.search(pattern, project_link)
-
-        if match:
-            toggle_button_state(self.upload_button)
-
-            self.project_id = match.group(1)
-
-            layer_names = get_selected_options(self)
-            layer_sources = []
-            for name in layer_names:
-                layers = QgsProject.instance().mapLayersByName(name)
-
-                if layers:
-                    layer = layers[0]
-
-                    if layer:
-                        geojson = {"type": "FeatureCollection", "features": []}
-                        attributes = layer.fields().names()
-
-                        for feature in layer.getFeatures():
-                            properties = {
-                                k: (
-                                    None
-                                    if isinstance(v, QVariant) and v.isNull()
-                                    else v.toString(Qt.DateFormat.ISODate)
-                                    if isinstance(v, QDate)
-                                    else v
-                                )
-                                for k, v in zip(
-                                    attributes,
-                                    [
-                                        feature[prop]
-                                        for prop in [
-                                            attribute
-                                            for attribute in attributes
-                                            if attribute
-                                            not in ["iconCaption", "marker-color"]
-                                        ]
-                                    ],
-                                )
-                            }
-
-                            geom = feature.geometry()
-                            geojson["features"].append(
-                                {
-                                    "type": "Feature",
-                                    "properties": properties,
-                                    "geometry": json.loads(geom.asJson()),
-                                }
-                            )
-
-                        layer_sources.append(
-                            {"name": name, "feature_collection": geojson}
-                        )
-                else:
-                    layer_sources.append(
-                        {
-                            "name": name,
-                            "feature_collection": {
-                                "type": "FeatureCollection",
-                                "features": [],
-                            },
-                        }
-                    )
-
-            try:
-                self.upload_layers(list(layer_sources), self.project_id)
-            except Exception as e:
-                toggle_button_state(self.upload_button)
-                QMessageBox.information(self, "", str(e))
-
-        else:
-            QMessageBox.warning(None, "Warning", "Please, provide link to Aino project")
-
-    def finish_upload(self, result):
-        json_result = json.loads(result)
-        text = json.loads(json_result["text"])
-        update_labels(text, self)
-        toggle_button_state(self.upload_button)
+        self.setCurrentWidget(self.inputs_tab)
+        self.prepare_inputs()
 
     def start_osm_thread(self):
         prompt = self.prompt_field.toPlainText()
@@ -408,21 +434,6 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             QMessageBox.critical(self, "", f"An error occurred: {e}, try again")
             pass
 
-    def upload_layers(self, features_with_names, project_id):
-        self._send(
-            "POST",
-            "/public/project/files/bulk_add_geojson",
-            {"qgis_layers": features_with_names, "project_id": project_id},
-            self._upload_finished,
-        )
-
-    def _upload_finished(self, result):
-        if result.ok:
-            self.finish_upload(self._legacy_result(result))
-        else:
-            self.upload_button.setEnabled(True)
-            QMessageBox.warning(self, "Upload failed", result.message)
-
     def process_result(self, response, request_type):
         if not response.ok:
             self._limit_errors[request_type] = response.message
@@ -478,6 +489,10 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self._restore_map_tool()
         self.project_id = None
         self.project_link_text.clear()
+        self.sync_status.clear()
+        self.sync_notice.clear()
+        self.relink_button.hide()
+        self.detach_button.hide()
         self.limits_response = None
         self._limit_errors = {}
         self.subscriptions_response = None
@@ -486,6 +501,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.upload_button.setEnabled(True)
 
     def closeEvent(self, event):
+        self.sync_controller.pause()
         self._discard_capture()
         self._restore_map_tool()
         for handle in self._handles:

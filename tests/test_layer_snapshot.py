@@ -243,7 +243,7 @@ def test_prepare_ui_ids_and_context_cancellation(qgis_app, tmp_path, wait_for):
     dialog = OsmParserDialogMain(
         osm_parser=SimpleNamespace(
             session=session,
-            api_client=None,
+            api_client=SimpleNamespace(session=session),
             iface=SimpleNamespace(mapCanvas=lambda: canvas),
         )
     )
@@ -302,7 +302,7 @@ def test_prepare_invalidates_renderer_and_center_changes(
     dialog = OsmParserDialogMain(
         osm_parser=SimpleNamespace(
             session=session,
-            api_client=None,
+            api_client=SimpleNamespace(session=session),
             iface=SimpleNamespace(mapCanvas=lambda: canvas),
         )
     )
