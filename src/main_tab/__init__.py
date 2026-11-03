@@ -1,22 +1,23 @@
-import json
 import os
 import tempfile
 
 from qgis.PyQt import QtWidgets, uic
-from qgis.PyQt.QtCore import Qt, pyqtSignal
+from qgis.PyQt.QtCore import Qt, QUrl, pyqtSignal
+from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import QMessageBox
 from qgis.core import QgsProject, QgsVectorLayer
 from qgis.gui import QgsMapToolEmitPoint
 
+from src.analysis.controller import AnalysisController
+from src.analysis.actions import ActionPanel, report_text
+from src.analysis.polling import TERMINAL
 from src.project_sync.area import capture_area
 from src.project_sync.layers import SnapshotCapture
 from src.project_sync.controller import SyncController
 from src.project_sync.styles import RenderReference
 
 from .helpers import (
-    add_data,
     update_scroll_area,
-    toggle_button_state,
 )
 
 _QT_POINTING_HAND_CURSOR = getattr(getattr(Qt, "CursorShape", Qt), "PointingHandCursor")
@@ -30,6 +31,7 @@ FORM_CLASS_main, _ = uic.loadUiType(
 class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
     inputs_prepared = pyqtSignal(dict, list)
     snapshot_ready = pyqtSignal(dict)
+    analysis_results_ready = pyqtSignal(dict)
 
     def __init__(self, parent=None, osm_parser=None):
         super(OsmParserDialogMain, self).__init__(parent)
@@ -46,6 +48,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.setup_account_controls()
         self._setup_inputs()
         self._setup_sync()
+        self._setup_analysis()
 
         self.go_button.clicked.connect(self.start_osm_thread)
         self.upload_button.clicked.connect(self.upload_process)
@@ -330,6 +333,8 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             return
         try:
             self.sync_controller.restore(QgsProject.instance())
+            if hasattr(self, "analysis_controller"):
+                self._resume_analysis()
         except (ValueError, OSError) as error:
             self._sync_failed(str(error))
 
@@ -351,6 +356,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.sync_controller.detach(QgsProject.instance())
+            self.analysis_controller.bind(QgsProject.instance())
             self.project_id = None
             self.project_link_text.clear()
             self.relink_button.hide()
@@ -369,6 +375,8 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def _project_sync_cleared(self):
         self.sync_controller.pause()
+        if hasattr(self, "analysis_controller"):
+            self.analysis_controller.bind(QgsProject.instance())
         self.sync_controller.state = None
         self.project_id = None
         self.project_link_text.clear()
@@ -378,61 +386,186 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.setCurrentWidget(self.inputs_tab)
         self.prepare_inputs()
 
-    def start_osm_thread(self):
-        prompt = self.prompt_field.toPlainText()
+    def _setup_analysis(self):
+        self.analysis_controller = AnalysisController(
+            self.api_client,
+            journal=self.sync_controller.journal,
+            project=QgsProject.instance(),
+            parent=self,
+        )
+        self.analysis_tab = QtWidgets.QWidget(self)
+        layout = QtWidgets.QVBoxLayout(self.analysis_tab)
+        self.analysis_stage = QtWidgets.QLabel(
+            "Preparation: prepare and sync inputs before GO", self
+        )
+        self.analysis_stage.setWordWrap(True)
+        self.analysis_steps = QtWidgets.QLabel(self)
+        self.analysis_steps.setTextFormat(Qt.TextFormat.PlainText)
+        self.analysis_steps.setWordWrap(True)
+        self.analysis_status = QtWidgets.QLabel(self)
+        self.analysis_status.setTextFormat(Qt.TextFormat.PlainText)
+        self.analysis_status.setWordWrap(True)
+        self.analysis_actions = ActionPanel(self)
+        scroll = QtWidgets.QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(self.analysis_actions)
+        self.analysis_report = QtWidgets.QTextBrowser(self)
+        self.analysis_report.setMinimumHeight(140)
+        self.analysis_resume = QtWidgets.QPushButton(
+            "Resume / retry saved request", self
+        )
+        self.analysis_cancel = QtWidgets.QPushButton("Cancel analysis", self)
+        self.analysis_link = QtWidgets.QPushButton("Open in Aino", self)
+        self.analysis_link.setEnabled(False)
+        self.analysis_url = None
+        for widget in (
+            self.analysis_stage,
+            self.analysis_status,
+            self.analysis_steps,
+            scroll,
+            self.analysis_report,
+            self.analysis_resume,
+            self.analysis_cancel,
+            self.analysis_link,
+        ):
+            layout.addWidget(widget)
+        self.addTab(self.analysis_tab, "Analysis")
+        self.analysis_controller.changed.connect(self._analysis_changed)
+        self.analysis_controller.status.connect(self.analysis_status.setText)
+        self.analysis_controller.results_ready.connect(self._analysis_results)
+        self.analysis_actions.submitted.connect(self._submit_analysis_action)
+        self.analysis_resume.clicked.connect(self._resume_analysis)
+        self.analysis_cancel.clicked.connect(self._cancel_analysis)
+        self.analysis_link.clicked.connect(self._open_analysis)
+        self._resume_analysis()
 
-        self.send_osm_request(prompt)
+    def _resume_analysis(self):
+        if not self.session.account_id:
+            return
+        try:
+            self.analysis_controller.restore()
+        except (ValueError, OSError) as error:
+            self.analysis_status.setText(str(error))
+
+    def _analysis_changed(self, state):
+        latest = state.get("latest") or {}
+        self.analysis_actions.set_action(
+            latest.get("pending_action"), bool(state.get("action_intent"))
+        )
+        self.analysis_steps.setText(
+            "\n".join(
+                f"{step.get('title', '')}: {step.get('status', '')}"
+                for step in latest.get("steps", [])
+                if isinstance(step, dict)
+            )
+        )
+        self.analysis_cancel.setEnabled(
+            bool(state.get("task_id"))
+            and latest.get("status") not in TERMINAL
+            and not state.get("action_intent")
+        )
+        active = (
+            bool(state.get("start_intent") or state.get("task_id"))
+            and latest.get("status") not in TERMINAL
+        )
+        self.go_button.setEnabled(not active and not state.get("action_intent"))
+        if state:
+            self.analysis_stage.setText(
+                "Analysis: " + latest.get("status", "submitting").replace("_", " ")
+            )
+        else:
+            self.analysis_stage.setText(
+                "Preparation: prepare and sync inputs before GO"
+            )
+            self.analysis_report.clear()
+            self.analysis_status.clear()
+        if latest.get("error"):
+            self.analysis_status.setText(str(latest["error"]))
+        if state.get("results") is not None:
+            self._show_report(state["results"].get("report"), latest.get("summary"))
+        elif latest.get("summary"):
+            self.analysis_report.setPlainText("Preview\n" + str(latest["summary"]))
+        else:
+            self.analysis_report.clear()
+        self.analysis_url = state.get("project_url")
+        url = QUrl(self.analysis_url or "")
+        self.analysis_link.setEnabled(
+            url.scheme() == "https" and bool(url.host()) and not url.userInfo()
+        )
+
+    def _show_report(self, report, summary=None):
+        text = report_text(report)
+        self.analysis_report.setPlainText(
+            text
+            or (
+                "Preview\n" + summary
+                if isinstance(summary, str) and summary
+                else "No narrative was returned. Open the analysis in Aino for available details."
+            )
+        )
+
+    def _analysis_results(self, manifest):
+        self._show_report(
+            manifest.get("report"),
+            (self.analysis_controller.state.get("latest") or {}).get("summary"),
+        )
+        self.analysis_stage.setText(
+            "Download: results ready for layer import"
+            if manifest.get("layers")
+            else "Analysis completed — text result"
+        )
+        self.analysis_results_ready.emit(manifest)
+
+    def _submit_analysis_action(self, action):
+        try:
+            self.analysis_controller.submit_action(action)
+        except (ValueError, OSError) as error:
+            self.analysis_status.setText(str(error))
+
+    def _cancel_analysis(self):
+        if (
+            QMessageBox.question(
+                self,
+                "Cancel analysis?",
+                "Cancel this analysis on the server? Closing the window keeps it running.",
+            )
+            == QMessageBox.StandardButton.Yes
+        ):
+            try:
+                self.analysis_controller.cancel()
+            except (ValueError, OSError) as error:
+                self.analysis_status.setText(str(error))
+
+    def _open_analysis(self):
+        if self.analysis_link.isEnabled():
+            QDesktopServices.openUrl(QUrl(self.analysis_url))
+
+    def start_osm_thread(self):
+        self.send_osm_request(self.prompt_field.toPlainText())
 
     def send_osm_request(self, prompt):
-        toggle_button_state(self.go_button)
-        self._send(
-            "POST",
-            "/public/ai_query/parser",
-            {"prompt": prompt},
-            lambda result: self.finish_ai(self._legacy_result(result), prompt),
-        )
+        state = self.sync_controller.state or {}
+        snapshot = state.get("snapshot") or {}
+        if snapshot.get("state") != "ready":
+            self.setCurrentWidget(self.inputs_tab)
+            self.capture_status.setText(
+                "Prepare and sync the inputs and area, then press GO to start analysis."
+            )
+            return
+        try:
+            self.analysis_controller.start(
+                snapshot["project_id"], snapshot["id"], prompt, state["context"]["area"]
+            )
+            self.setCurrentWidget(self.analysis_tab)
+        except (ValueError, OSError, KeyError) as error:
+            self.analysis_status.setText(str(error))
+            self.setCurrentWidget(self.analysis_tab)
 
     def _send(self, method, path, payload, callback):
         self._handles[:] = [handle for handle in self._handles if handle.pending]
         handle = self.api_client.send(method, path, payload, callback)
         self._handles.append(handle)
         return handle
-
-    def _legacy_result(self, result):
-        data = result.data if result.ok else {"message": result.message}
-        return json.dumps({"status": result.status or 503, "text": json.dumps(data)})
-
-    def finish_ai(self, result, prompt):
-        toggle_button_state(self.go_button)
-
-        try:
-            result_json = json.loads(result)
-            data = result_json["text"]
-            status = result_json["status"]
-            if status // 100 == 2:
-                data_dict = json.loads(data)
-
-                result_elements = len(data_dict["features"])
-                add_data(data, prompt)
-                self.update_interface_with_restrictions_start()
-                update_scroll_area(self)
-                if result_elements:
-                    QMessageBox.information(
-                        self, "", f"Found {result_elements} elements"
-                    )
-                else:
-                    QMessageBox.warning(
-                        self, "", "Nothing was found, try to reformulate your query"
-                    )
-
-            elif status // 100 == 4:
-                QMessageBox.critical(self, "", f"Request error: {data}")
-            elif status // 100 == 5:
-                QMessageBox.critical(self, "", f"Response error: {data}")
-
-        except Exception as e:
-            QMessageBox.critical(self, "", f"An error occurred: {e}, try again")
-            pass
 
     def process_result(self, response, request_type):
         if not response.ok:
@@ -500,7 +633,12 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.go_button.setEnabled(True)
         self.upload_button.setEnabled(True)
 
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._resume_sync()
+
     def closeEvent(self, event):
+        self.analysis_controller.pause()
         self.sync_controller.pause()
         self._discard_capture()
         self._restore_map_tool()

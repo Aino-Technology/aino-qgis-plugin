@@ -66,3 +66,66 @@ Task11 imported-layer provenance contract: set JSON custom property **aino/outpu
 For a changed categorized presentation, Task11 may provide optional `class_mapping`: `{dataset_id, version, content_hash, local_field, server_field, classes}` tied to the same protected identity. `server_field` must exist in authoritative field_schema. `classes` maps every captured synthetic class ID (including any unrendered class used in the style) to the exact list of original server values represented by that class. Establish this mapping from original attributes and the post-import classification results, never by comparing labels/colors. Empty lists are allowed for classes with no represented source values. The synchronizer rewrites only style columns/values through this mapping, retaining server provenance with current capture metadata under `qgis.local_presentation`; it hashes the resulting envelope independently. Missing/incompatible mapping conservatively uploads captured data. Selection completeness and data-baseline checks still apply.
 
 QGIS input and result `style` are explicit envelopes `{dataset_type, style, qgis}`. Core projects store separate dataset_type plus flat appearance (`groups: []` for plain styles) and qgis metadata, while immutable snapshots retain their original envelope/hash. Result envelopes preserve current default/groups mode; incompatible categories and unsupported gradient/heatmap modes explicitly fall back to base/default with warnings, including simplified point sizing. Task11 must honor those warnings and the envelope discriminator, not infer a renderer from stale groups/provenance. Nonempty pre-release cached results with untyped flat style are explicitly rejected; text-only results remain valid. This does not restart analysis or reconstruct historical appearance from current dataset presentation.
+
+### Task 10 analysis lifecycle and Task 11 result handoff
+
+GO now starts the durable multistep analysis API after an acknowledged input snapshot.
+Prepare inputs, review any style warnings, explicitly synchronize, then press GO.
+Snapshot readiness and restored readiness never start a new analysis. The Analysis tab
+shows preparation, server analysis state/steps, and result availability separately;
+it does not estimate progress percentages. Closing the window or unloading pauses
+local requests only. Cancel analysis is an explicit server action with confirmation.
+
+`AnalysisController(api, journal=None, project=None, parent=None, scheduler=None)` owns
+only the journal's `analysis` section through `update_sections`. Its public entry
+points are `start(project_id, snapshot_id, prompt, area)`, `restore(task_id=None)`,
+`submit_action(action)`, `cancel()`, `bind(project)`, `pause()` and `close()`.
+`restore()` discovers the current account/project journal without creating an identity
+for an untouched project; an explicit `task_id` can attach a known task when none is
+already attached. `bind` clears local scope without altering the previous journal.
+
+The section stores `start_intent` (the complete immutable request body and UUID),
+`task_id`, `project_url`, `latest` (compact DTO), optional `action_intent` (complete
+flat action body/UUID), and optional `results` (manifest and full report). Mutating
+requests are persisted before sending; uncertain start/action responses retain their
+exact request IDs and payloads. Resume retries these intents, never retargets an old
+answer. A 409 discards only that rejected action intent and refreshes server state.
+Other failures remain recoverable and do not create a failed analysis state.
+A second analysis requires the previous server task to be terminal and no uncertain
+action receipt. Revisions older than the displayed state are ignored.
+
+`PollingController.watch(task_id)` immediately reads state, then schedules the next
+request four seconds after delivery. It retains one pending request through login
+recovery, backs off 4/8/16/32/60 seconds on failures, resets on success, continues
+while awaiting input/confirmation, and stops at a terminal state. `stop()` aborts only
+local delivery. Controller scope guards suppress callbacks after project/account
+changes; reopening and same-account login resume the saved operation.
+
+Question controls preserve item and option IDs, complete wording, descriptions,
+single/multiple choices and permitted free text. Ordinary plan approval submits an
+empty payload; screening Run/Edit submits actual question answers, with text required
+for Edit. Source consent confirms all server tags, displaying persisted per-unit
+`source_info` rates and server expiry. Missing rates are unavailable, never free;
+these rates are informational, with no quantity, total estimate or price-lock promise.
+A credits pause without `pending_action` has no synthetic consent button. Contact
+options open the same `mailto:hello@aino.world` destination as Aino on user selection.
+Frozen-area server question tools reject/regenerate drawing options; an old malformed
+round is visibly unsupported in the plugin, never submitted as a fake drawing.
+
+`AnalysisController.results_ready(dict)` and main tab `analysis_results_ready(dict)`
+are Task 11's handoff. The manifest is already durably saved in `analysis.results`,
+and is re-emitted on restore. Task 11 must make repeated deliveries idempotent using
+its own `imports` journal section; it must not overwrite `analysis`, `sync` or
+`datasets`. Current scope is available as controller `account`, `identity`, and
+`state.start_intent.project_id`; the manifest contains `task_id` and authoritative
+layer identities/versions/styles/schema. No geometry is embedded in polling and no
+layer import/download is implemented by Task 10. Nonempty manifests show
+“Download: results ready for layer import”; Task 11 owns actual download/import
+progress. Empty manifests still fetch and display the full result report.
+
+Reports are displayed as escaped/plain text, including the actual structured screening
+narrative, criteria, candidates, risks, methodology and parcel-data limitations.
+Recognized standalone widget markers are omitted from text display; rich web widgets
+remain accessible through Open in Aino. The full server report is retained in the
+journal regardless of display shape. Unknown reports fall back to an explicitly
+labelled preview/link, without dumping arbitrary JSON or inventing findings.

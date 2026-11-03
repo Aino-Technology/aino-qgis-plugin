@@ -231,6 +231,7 @@ class OsmParser:
             return
         self._unloading = True
         if self.main_dlg is not None:
+            self.main_dlg.analysis_controller.close()
             self.main_dlg.sync_controller.close()
         self.api_client.close()
         for dialog in tuple(self._auth_dialogs):
