@@ -447,3 +447,196 @@ def test_truncated_success_body_is_a_network_failure(client, local_api, wait_for
     local_api.respond(0, 200, {}, {"Content-Length": "100"})
     wait_for(lambda: bool(received))
     assert not received[0].ok and received[0].error == "network_error"
+
+
+def test_account_change_detaches_all_old_requests_before_reentrant_callback(
+    client, local_api, wait_for
+):
+    session, api = client
+    session.set_access_token(token())
+    completions = []
+    fresh = []
+    callbacks_active = []
+    callback_errors = []
+    handles = []
+
+    def completed(index, response):
+        completions.append((index, response, session.account_id))
+        if len(completions) != 1:
+            return
+        try:
+            callbacks_active.append([handle.active for handle in handles])
+            local_api.respond(1 - index, 200, {"owner": "account-a"})
+            api.send("GET", "/fresh-account-operation", None, fresh.append)
+            wait_for(lambda: len(local_api.requests) == 3)
+            local_api.respond(2, 200, {"owner": "account-b"})
+            wait_for(lambda: bool(fresh))
+        except Exception as error:
+            callback_errors.append(error)
+
+    for index in range(2):
+        handles.append(
+            api.send(
+                "GET",
+                f"/old-operation-{index}",
+                None,
+                lambda response, index=index: completed(index, response),
+            )
+        )
+    wait_for(lambda: len(local_api.requests) == 2)
+    session.set_access_token(token("account-b"))
+    assert not callback_errors
+    assert callbacks_active == [[False, False]]
+    assert len(completions) == 2
+    assert all(
+        response.error == "account_changed" and owner == "account-b"
+        for _, response, owner in completions
+    )
+    assert fresh[0].ok and fresh[0].data == {"owner": "account-b"}
+    assert (
+        local_api.requests[2]["headers"]["Authorization"]
+        == f"Bearer {token('account-b')}"
+    )
+
+
+def test_completion_checks_identity_during_earlier_account_change_listener(
+    local_api, wait_for, qgis_app
+):
+    from src.api_client import ApiClient
+    from src.session import Session
+
+    session = Session()
+    received = []
+    callback_errors = []
+
+    def earlier_listener(previous, current):
+        if previous and current != previous:
+            try:
+                local_api.respond(0, 200, {"owner": "account-a"})
+                wait_for(lambda: bool(received))
+            except Exception as error:
+                callback_errors.append(error)
+
+    session.account_changed.connect(earlier_listener)
+    api = ApiClient(session, local_api.origin)
+    try:
+        session.set_access_token(token())
+        api.send("GET", "/old-operation", None, received.append)
+        wait_for(lambda: len(local_api.requests) == 1)
+        session.set_access_token(token("account-b"))
+        assert not callback_errors
+        assert len(received) == 1 and received[0].error == "account_changed"
+        assert not received[0].ok
+    finally:
+        api.close()
+        api.deleteLater()
+        session.deleteLater()
+
+
+@pytest.mark.parametrize("entry", ["start", "signup"])
+def test_unload_closes_nested_owned_auth_dialogs_without_reopening(
+    local_api, wait_for, qgis_app, monkeypatch, entry
+):
+    from pathlib import Path
+    import sys
+    import webbrowser
+    import src
+    from qgis.PyQt import sip
+    from src.login.login_tab import LoginDialog
+    from src.login.signup_tab import SignupDialog
+
+    root = Path(__file__).resolve().parents[1]
+    monkeypatch.setattr(src, "API_LINK", local_api.origin)
+    monkeypatch.setattr(webbrowser, "open", lambda *args, **kwargs: True)
+    name = f"aino_plugin_modal_test_{uuid4().hex}"
+    spec = importlib.util.spec_from_file_location(
+        name, root / "__init__.py", submodule_search_locations=[str(root)]
+    )
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    window = QWidget()
+    unrelated = QWidget()
+    unrelated.show()
+    iface = SimpleNamespace(
+        mainWindow=lambda: window,
+        addToolBarIcon=lambda action: None,
+        addPluginToMenu=lambda *args: None,
+        removePluginMenu=lambda *args: None,
+        removeToolBarIcon=lambda action: None,
+    )
+    plugin = module.classFactory(iface)
+    plugin.initGui()
+    owned = []
+    visible_after_unload = []
+    errors = []
+
+    def visible(widget):
+        return not sip.isdeleted(widget) and widget.isVisible()
+
+    def stop_from_login():
+        try:
+            dialog = next(
+                widget
+                for widget in qgis_app.topLevelWidgets()
+                if isinstance(widget, LoginDialog) and widget.isVisible()
+            )
+            owned.append(dialog)
+            dialog.username.setText("test@example.invalid")
+            dialog.password.setText("test-password")
+            dialog.check_credentials()
+            wait_for(lambda: len(local_api.requests) == 1)
+            plugin.unload()
+            dialog.check_credentials()
+            plugin.session.require_login()
+            plugin.run()
+            visible_after_unload.append(visible(dialog))
+            if visible(dialog):
+                dialog.reject()
+        except Exception as error:
+            errors.append(error)
+            plugin.unload()
+            for dialog in owned:
+                if visible(dialog):
+                    dialog.reject()
+
+    def signup_login():
+        try:
+            dialog = next(
+                widget
+                for widget in qgis_app.topLevelWidgets()
+                if isinstance(widget, SignupDialog) and widget.isVisible()
+            )
+            owned.append(dialog)
+            QTimer.singleShot(0, stop_from_login)
+            dialog.login()
+        except Exception as error:
+            errors.append(error)
+            plugin.unload()
+
+    def begin():
+        owned.append(plugin.start_dlg)
+        if entry == "start":
+            QTimer.singleShot(0, stop_from_login)
+            plugin.start_dlg.login()
+        else:
+            QTimer.singleShot(0, signup_login)
+            plugin.start_dlg.handle_signup()
+
+    try:
+        QTimer.singleShot(0, begin)
+        plugin.run()
+        assert not errors
+        assert visible_after_unload == [False]
+        assert all(not visible(dialog) for dialog in owned)
+        assert not visible(plugin.main_dlg)
+        assert unrelated.isVisible()
+        assert plugin.api_client.pending_count == 0
+        assert plugin.session.access_token is None
+        assert len(local_api.requests) == 1
+    finally:
+        for dialog in owned + [plugin.main_dlg, unrelated, window]:
+            if dialog is not None and not sip.isdeleted(dialog):
+                dialog.close()
+                dialog.deleteLater()
+        plugin.api_client.close()

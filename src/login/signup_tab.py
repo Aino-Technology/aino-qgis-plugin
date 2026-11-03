@@ -2,21 +2,20 @@ import os
 
 from qgis.PyQt import uic
 from qgis.PyQt import QtWidgets
-from .login_tab import LoginDialog
-from . import exec_dialog
 
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
-FORM_CLASS_start, _ = uic.loadUiType(os.path.join(
-    os.path.dirname(__file__), './ui_files/signup.ui'))
+FORM_CLASS_start, _ = uic.loadUiType(
+    os.path.join(os.path.dirname(__file__), "./ui_files/signup.ui")
+)
 
 
 class SignupDialog(QtWidgets.QDialog):
-
-    def __init__(self, osm_parser=None):
+    def __init__(self, osm_parser=None, parent=None):
         """Constructor."""
-        super().__init__()
-        uic.loadUi(os.path.join(
-            os.path.dirname(__file__), './ui_files/signup.ui'), self)        # Set up the user interface from Designer through FORM_CLASS.
+        super().__init__(parent)
+        uic.loadUi(
+            os.path.join(os.path.dirname(__file__), "./ui_files/signup.ui"), self
+        )
         # After self.setupUi() you can access any designer object by doing
         # self.<objectname>, and you can use autoconnect slots - see
         # http://qt-project.org/doc/qt-4.8/designer-using-a-ui-file.html
@@ -31,10 +30,10 @@ class SignupDialog(QtWidgets.QDialog):
             self.login()
 
     def login(self):
+        if self.main_ui.unloading:
+            return
         self.hide()
-        login_dialog = LoginDialog(self.main_ui)
-        if exec_dialog(login_dialog):
-            login_dialog.hide()
+        if self.main_ui.exec_login(self):
             self.accept()
-        else:
+        elif not self.main_ui.unloading:
             self.show()

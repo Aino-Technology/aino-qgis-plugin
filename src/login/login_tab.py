@@ -20,8 +20,8 @@ _QT_PLAIN_TEXT = getattr(_QT_TEXT_FORMAT, "PlainText")
 
 
 class LoginDialog(QDialog):
-    def __init__(self, main_ui):
-        super().__init__()
+    def __init__(self, main_ui, parent=None):
+        super().__init__(parent)
         uic.loadUi(os.path.join(
             os.path.dirname(__file__), './ui_files/login.ui'), self)
         self.label_2.setText("")
@@ -171,22 +171,22 @@ class LoginDialog(QDialog):
         message_box.exec()
 
     def handle_signup(self, _checked=False):
-        """Open web sign-up and return to this login flow afterwards."""
         import webbrowser
 
-        from . import exec_dialog
-        from .signup_tab import SignupDialog
-
+        if self.main_ui.unloading:
+            return
+        if self._request and self._request.active:
+            return
         self.hide()
         webbrowser.open("https://app.aino.world/auth", new=0, autoraise=True)
-        signup_dialog = SignupDialog(self.main_ui)
-        if exec_dialog(signup_dialog):
+        if self.main_ui.exec_signup(self):
             self.accept()
-        else:
+        elif not self.main_ui.unloading:
             self.show()
 
-
     def check_credentials(self):
+        if getattr(self.main_ui, "unloading", False):
+            return
         if self._request and self._request.active:
             return
         self.expand_username_replacement()

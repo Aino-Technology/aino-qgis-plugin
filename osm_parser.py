@@ -19,6 +19,7 @@ from src import API_LINK
 from src.api_client import ApiClient
 from src.session import Session
 from src.login.login_tab import LoginDialog
+from src.login.signup_tab import SignupDialog
 from src.login import exec_dialog
 from src.main_tab import OsmParserDialogMain
 
@@ -64,6 +65,12 @@ class OsmParser:
         self.api_client = ApiClient(self.session, api_origin)
         self.session.login_required.connect(self._require_login)
         self._login_dialog = None
+        self._auth_dialogs = set()
+        self._unloading = False
+
+    @property
+    def unloading(self):
+        return self._unloading
 
     @property
     def user_logged_in(self):
@@ -73,19 +80,48 @@ class OsmParser:
     def bearer_token(self):
         return self.session.access_token
 
-    def _require_login(self):
+    def _own_auth_dialog(self, dialog):
+        self._auth_dialogs.add(dialog)
+        dialog.destroyed.connect(lambda: self._auth_dialogs.discard(dialog))
+        return dialog
+
+    def _get_login_dialog(self, parent=None):
         if self._login_dialog is None:
-            self._login_dialog = LoginDialog(self)
-            self._login_dialog.finished.connect(self._login_closed)
-            self._login_dialog.open()
+            dialog = self._own_auth_dialog(LoginDialog(self, parent))
+            self._login_dialog = dialog
+            dialog.finished.connect(lambda result: self._login_closed(dialog))
+        return self._login_dialog
+
+    def _require_login(self):
+        if self.unloading:
+            return
+        if self._login_dialog is None:
+            self._get_login_dialog().open()
         self._login_dialog.raise_()
         self._login_dialog.activateWindow()
 
-    def _login_closed(self, result):
-        dialog = self._login_dialog
-        self._login_dialog = None
-        if dialog is not None:
+    def exec_login(self, parent=None):
+        """Run the plugin-owned login dialog unless unload has started."""
+        if self.unloading:
+            return False
+        return bool(exec_dialog(self._get_login_dialog(parent))) and not self.unloading
+
+    def exec_signup(self, parent=None):
+        """Run a plugin-owned signup dialog without reopening it after unload."""
+        if self.unloading:
+            return False
+        dialog = self._own_auth_dialog(SignupDialog(self, parent))
+        try:
+            return bool(exec_dialog(dialog)) and not self.unloading
+        finally:
+            self._auth_dialogs.discard(dialog)
             dialog.deleteLater()
+
+    def _login_closed(self, dialog):
+        if self._login_dialog is dialog:
+            self._login_dialog = None
+        self._auth_dialogs.discard(dialog)
+        dialog.deleteLater()
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -191,10 +227,15 @@ class OsmParser:
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
+        if self.unloading:
+            return
+        self._unloading = True
         self.api_client.close()
-        for dialog in (self._login_dialog, self.start_dlg, self.main_dlg):
-            if dialog is not None:
-                dialog.close()
+        for dialog in tuple(self._auth_dialogs):
+            dialog.close()
+        self._auth_dialogs.clear()
+        if self.main_dlg is not None:
+            self.main_dlg.close()
         self.session.clear()
         for action in self.actions:
             self.iface.removePluginMenu(
@@ -205,6 +246,9 @@ class OsmParser:
     def run(self):
         """Run method that performs all the real work"""
 
+        if self.unloading:
+            return
+
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start:
@@ -213,8 +257,9 @@ class OsmParser:
 
         # show the dialog
         if not self.user_logged_in:
-            login_dialog = LoginDialog(self)
-            result = exec_dialog(login_dialog)
+            result = self.exec_login()
+            if self.unloading:
+                return
 
             if result:
                 self.main_dlg.update_interface_with_restrictions_start()

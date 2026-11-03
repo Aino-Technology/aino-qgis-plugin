@@ -173,6 +173,9 @@ class ApiClient(QObject):
         reply = handle.reply
         if not handle.active or reply is None:
             return
+        if handle.authenticated and handle.account_id != self.session.account_id:
+            self._complete(handle, ApiResponse(0, error="account_changed"))
+            return
         handle.reply = None
         status = reply.attribute(QNetworkRequest.Attribute.HttpStatusCodeAttribute) or 0
         raw = bytes(reply.readAll())
@@ -217,23 +220,33 @@ class ApiClient(QObject):
                 self._dispatch(handle)
 
     def _account_changed(self, previous, current):
+        invalidated = []
         for handle in tuple(self._pending):
             if (
                 handle.authenticated
                 and handle.account_id is not None
                 and handle.account_id != current
             ):
-                self._complete(handle, ApiResponse(0, error="account_changed"))
+                callback = handle.callback
+                reply = self._detach(handle)
+                invalidated.append((callback, reply))
+        for _, reply in invalidated:
+            self._abort_reply(reply)
+        for callback, _ in invalidated:
+            if not self._closed:
+                callback(ApiResponse(0, error="account_changed"))
 
     def _complete(self, handle, response):
         if not handle.active:
             return
         callback = handle.callback
         self._abort(handle)
-        callback(response)
+        if handle.authenticated and handle.account_id != self.session.account_id:
+            response = ApiResponse(0, error="account_changed")
+        if not self._closed:
+            callback(response)
 
-    def _abort(self, handle):
-        self._check_thread()
+    def _detach(self, handle):
         handle.active = False
         handle.waiting_for_login = False
         handle.callback = None
@@ -242,9 +255,16 @@ class ApiClient(QObject):
         self._pending.discard(handle)
         reply = handle.reply
         handle.reply = None
+        return reply
+
+    def _abort_reply(self, reply):
         if reply is not None:
             reply.abort()
             reply.deleteLater()
+
+    def _abort(self, handle):
+        self._check_thread()
+        self._abort_reply(self._detach(handle))
 
     def _check_thread(self):
         if QThread.currentThread() != self.thread():
