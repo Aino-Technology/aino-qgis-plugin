@@ -29,6 +29,11 @@ FORM_CLASS_main, _ = uic.loadUiType(os.path.join(
 PROJECT_URL_PATTERN = re.compile(r"https://app\.aino\.world/project/(\d+)")
 IGNORED_ATTRIBUTES = {"iconCaption", "marker-color"}
 
+_QT_DATE_FORMAT = getattr(getattr(Qt, "DateFormat", Qt), "ISODate")
+_QT_POINTING_HAND_CURSOR = getattr(
+    getattr(Qt, "CursorShape", Qt), "PointingHandCursor")
+_QT_TOP_RIGHT_CORNER = getattr(getattr(Qt, "Corner", Qt), "TopRightCorner")
+
 
 def serialize_attribute(value):
     if isinstance(value, QVariant):
@@ -37,7 +42,7 @@ def serialize_attribute(value):
         value = value.value()
 
     if isinstance(value, QDate):
-        return value.toString(Qt.ISODate)
+        return value.toString(_QT_DATE_FORMAT)
 
     return value
 
@@ -77,7 +82,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
         self.sign_out_button = QtWidgets.QPushButton("Sign out")
         self.sign_out_button.setObjectName("sign_out_button")
-        self.sign_out_button.setCursor(Qt.PointingHandCursor)
+        self.sign_out_button.setCursor(_QT_POINTING_HAND_CURSOR)
         self.sign_out_button.setToolTip("Sign out of this Aino account")
         self.sign_out_button.clicked.connect(self.sign_out)
 
@@ -91,7 +96,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             "border-color: #FDA29B; }"
             "QPushButton:focus { border: 2px solid #315EFB; }"
         )
-        self.setCornerWidget(self.account_widget, Qt.TopRightCorner)
+        self.setCornerWidget(self.account_widget, _QT_TOP_RIGHT_CORNER)
 
     def set_account_email(self, email):
         """Show the signed-in email and keep the full value available on hover."""
@@ -204,7 +209,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             text = json.loads(json_result["text"])
             update_labels(text, self)
         except (TypeError, ValueError, KeyError) as error:
-            QMessageBox.critical(self, "Upload failed", f"Invalid server response: {error}")
+            QMessageBox.critical(self, "Send failed", f"Invalid server response: {error}")
         finally:
             set_button_enabled(self.upload_button, True)
 
@@ -369,7 +374,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                 error_text = reply.readAll().data().decode(errors="replace")
                 message = error_text or reply.errorString()
                 set_button_enabled(self.upload_button, True)
-                QMessageBox.critical(self, "Upload failed", message)
+                QMessageBox.critical(self, "Send failed", message)
                 return
 
             status_code = self.get_status_code(reply)

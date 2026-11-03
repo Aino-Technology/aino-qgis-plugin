@@ -443,7 +443,7 @@ padding: 2px 0;
   </widget>
   <widget class="QWidget" name="upload_tab">
    <attribute name="title">
-    <string>Import from Aino</string>
+    <string>Send to Aino</string>
    </attribute>
    <widget class="QLabel" name="label_2">
     <property name="geometry">
@@ -462,7 +462,7 @@ padding: 2px 0;
      </font>
     </property>
     <property name="text">
-     <string>Upload layers from QGIS to Aino.</string>
+     <string>Send layers from QGIS to Aino.</string>
     </property>
    </widget>
    <widget class="QLabel" name="label_6">
@@ -475,7 +475,7 @@ padding: 2px 0;
      </rect>
     </property>
     <property name="text">
-     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Please input the web link to the Aino project to upload data layers from QGIS.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
+     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;Enter the Aino project link to send layers from QGIS.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
     </property>
    </widget>
    <widget class="QLineEdit" name="project_link_text">
@@ -721,7 +721,7 @@ border-radius: 5px;
 </string>
     </property>
     <property name="text">
-     <string>Upload</string>
+     <string>Send</string>
     </property>
     <property name="default">
      <bool>true</bool>
@@ -740,7 +740,7 @@ border-radius: 5px;
      <string notr="true">background-color: white</string>
     </property>
     <property name="text">
-     <string>Select layers for upload:</string>
+     <string>Select layers to send:</string>
     </property>
    </widget>
   </widget>

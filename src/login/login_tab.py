@@ -6,9 +6,19 @@ import sys
 import requests
 from qgis.PyQt import uic
 from qgis.PyQt.QtCore import QEvent, Qt
+from qgis.PyQt.QtGui import QPixmap
 from qgis.PyQt.QtWidgets import QDialog, QMessageBox
 
 from src import API_LINK
+
+
+_QT_KEY = getattr(Qt, "Key", Qt)
+_QT_TEXT_FORMAT = getattr(Qt, "TextFormat", Qt)
+_QT_KEY_SPACE = getattr(_QT_KEY, "Key_Space")
+_QT_KEY_TAB = getattr(_QT_KEY, "Key_Tab")
+_QT_KEY_RETURN = getattr(_QT_KEY, "Key_Return")
+_QT_KEY_ENTER = getattr(_QT_KEY, "Key_Enter")
+_QT_PLAIN_TEXT = getattr(_QT_TEXT_FORMAT, "PlainText")
 
 
 class LoginDialog(QDialog):
@@ -16,12 +26,22 @@ class LoginDialog(QDialog):
         super().__init__()
         uic.loadUi(os.path.join(
             os.path.dirname(__file__), './ui_files/login.ui'), self)
+        self.label_2.setText("")
+        self.label_2.setPixmap(QPixmap(os.path.join(
+            os.path.dirname(__file__), '../../Welcome.svg')))
+        self.label_2.setScaledContents(True)
 
         self.main_ui = main_ui
         self.process_login.clicked.connect(self.check_credentials)
         self.signup_button.clicked.connect(self.handle_signup)
         self._text_replacements = self.load_macos_text_replacements()
         self.username.installEventFilter(self)
+
+    @staticmethod
+    def message_box_icon(name):
+        """Return a QMessageBox icon on both Qt 5 and Qt 6."""
+        icon_enum = getattr(QMessageBox, "Icon", QMessageBox)
+        return getattr(icon_enum, name)
 
     @staticmethod
     def load_macos_text_replacements():
@@ -81,10 +101,10 @@ class LoginDialog(QDialog):
     def eventFilter(self, watched, event):
         if watched is self.username and event.type() == QEvent.KeyPress:
             trigger_keys = {
-                Qt.Key_Space,
-                Qt.Key_Tab,
-                Qt.Key_Return,
-                Qt.Key_Enter,
+                _QT_KEY_SPACE,
+                _QT_KEY_TAB,
+                _QT_KEY_RETURN,
+                _QT_KEY_ENTER,
             }
             trigger_characters = ",.;:!?)]}"
             if event.key() in trigger_keys or event.text() in trigger_characters:
@@ -119,12 +139,14 @@ class LoginDialog(QDialog):
 
         return "Unable to log in right now. Please try again."
 
-    def show_login_error(self, message, icon=QMessageBox.Warning):
+    def show_login_error(self, message, icon=None):
         """Show a readable login error independent of the QGIS theme."""
         message_box = QMessageBox(self)
+        if icon is None:
+            icon = self.message_box_icon("Warning")
         message_box.setIcon(icon)
         message_box.setWindowTitle("Login failed")
-        message_box.setTextFormat(Qt.PlainText)
+        message_box.setTextFormat(_QT_PLAIN_TEXT)
         message_box.setText(message)
         message_box.setStandardButtons(QMessageBox.Ok)
         message_box.setStyleSheet(
@@ -163,20 +185,23 @@ class LoginDialog(QDialog):
         try:
             result = requests.post(auth_url, json=login_data, timeout=30)
         except requests.RequestException as error:
-            self.show_login_error(str(error), QMessageBox.Critical)
+            self.show_login_error(str(error), self.message_box_icon("Critical"))
             return
 
         if result.status_code == 200:
             try:
                 access_token = result.json().get("access_token")
             except ValueError as error:
-                self.show_login_error(f"Invalid server response: {error}", QMessageBox.Critical)
+                self.show_login_error(
+                    f"Invalid server response: {error}",
+                    self.message_box_icon("Critical"),
+                )
                 return
 
             if not access_token:
                 self.show_login_error(
                     "The server did not return an access token.",
-                    QMessageBox.Critical,
+                    self.message_box_icon("Critical"),
                 )
                 return
 
