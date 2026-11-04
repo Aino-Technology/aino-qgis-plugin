@@ -25,6 +25,18 @@ from src.project_sync.area import capture_area
 from src.project_sync.area_preview import AreaPreview
 
 
+class ManualAreaRequired(ValueError):
+    GUIDANCE = {
+        1: "Press Use current view to confirm the analysis area",
+        2: "Choose a boundary layer and select polygon features",
+        3: "Press Pick on map to choose a point and set its radius",
+    }
+
+    def __init__(self, mode):
+        self.guidance = self.GUIDANCE[mode]
+        super().__init__(self.guidance)
+
+
 class PointCapture(QgsMapToolEmitPoint):
     cancelled = pyqtSignal()
 
@@ -138,13 +150,7 @@ class AreaPanel(QWidget):
             return None
         area = self.confirmed.get(index)
         if not area:
-            raise ValueError(
-                {
-                    1: "Press Use current view to confirm the analysis area",
-                    2: "Select polygon features in the boundary layer",
-                    3: "Pick a point on the map and set its radius",
-                }[index]
-            )
+            raise ManualAreaRequired(index)
         return copy.deepcopy(area)
 
     def set_resolved_area(self, area):
@@ -368,6 +374,7 @@ class AreaPanel(QWidget):
         self._display()
 
     def _project_loaded(self, *args):
+        self.refresh_layers()
         self.initially_empty = not bool(self.project.mapLayers())
 
     def update_analysis(self, api, state, identity):

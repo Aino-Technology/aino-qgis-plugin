@@ -347,7 +347,11 @@ class AnalysisController(QObject):
             ):
                 raise ValueError("Invalid result manifest")
             self.state["results"] = copy.deepcopy(data)
-            self._save()
+            try:
+                self._save()
+            except (OSError, ValueError, KeyError, TypeError):
+                self.state.pop("results", None)
+                raise
             self.changed.emit(copy.deepcopy(self.state))
             self.results_ready.emit(copy.deepcopy(data))
 

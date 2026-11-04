@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import tempfile
 
@@ -18,7 +20,7 @@ from src.project_sync.styles import RenderReference
 from src.results.controller import ResultController
 
 from .analysis_panel import AnalysisPanel
-from .area_panel import AreaPanel
+from .area_panel import AreaPanel, ManualAreaRequired
 from .helpers import (
     analysis_limits_text,
     update_days_label,
@@ -136,6 +138,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.area_mode = self.area_panel.mode
         self.radius_input = self.area_panel.radius
         self.input_layers = self.area_panel.inputs
+        self.input_layers.itemChanged.connect(self._save_draft_inputs)
         self.area_panel.selection_changed.connect(self._discard_capture)
         self.preview_inputs_button.clicked.connect(lambda: self.prepare_inputs())
         self.cancel_capture_button.clicked.connect(self._discard_capture)
@@ -322,26 +325,55 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         if not self.session.account_id or not hasattr(self, "request_controller"):
             return
         try:
-            previous = (
-                self.request_controller.identity,
-                self.request_controller.account,
-            )
             self.request_controller.restore()
-            current = (
-                self.request_controller.identity,
-                self.request_controller.account,
-            )
-            if previous != current:
-                selected = set(self.request_controller.state.get("layer_ids", []))
-                for index in range(self.input_layers.count()):
-                    item = self.input_layers.item(index)
-                    item.setCheckState(
-                        Qt.CheckState.Checked
-                        if item.data(Qt.ItemDataRole.UserRole) in selected
-                        else Qt.CheckState.Unchecked
-                    )
         except (ValueError, OSError) as error:
             self._sync_failed(str(error))
+        finally:
+            self._restore_draft_inputs()
+
+    def _draft_input_key(self):
+        account = self.session.account_id
+        return (
+            "draft_inputs/account_" + hashlib.sha256(account.encode()).hexdigest()
+            if account
+            else None
+        )
+
+    def _save_draft_inputs(self, *args):
+        key = self._draft_input_key()
+        if key:
+            QgsProject.instance().writeEntry(
+                "aino", key, json.dumps(self.selected_input_ids())
+            )
+
+    def _restore_draft_inputs(self, accepted_fallback=True):
+        key = self._draft_input_key()
+        value, exists = (
+            QgsProject.instance().readEntry("aino", key, "") if key else ("", False)
+        )
+        try:
+            selected = (
+                json.loads(value)
+                if exists
+                else self.request_controller.state.get("layer_ids", [])
+                if key and accepted_fallback
+                else []
+            )
+        except (ValueError, TypeError):
+            selected = []
+        if not isinstance(selected, list):
+            selected = []
+        self.input_layers.blockSignals(True)
+        for index in range(self.input_layers.count()):
+            item = self.input_layers.item(index)
+            item.setCheckState(
+                Qt.CheckState.Checked
+                if item.data(Qt.ItemDataRole.UserRole) in selected
+                else Qt.CheckState.Unchecked
+            )
+        self.input_layers.blockSignals(False)
+        if exists and selected != self.selected_input_ids():
+            self._save_draft_inputs()
 
     def _sync_notice(self, message):
         self.sync_notice.setText(
@@ -642,7 +674,14 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             and not analysis.get("action_intent")
         )
         self.analysis_resume.setEnabled(
-            active or bool(state.get("error")) or self.sync_controller.busy
+            active
+            or bool(state.get("error"))
+            or self.sync_controller.busy
+            or bool(
+                analysis.get("task_id")
+                and latest.get("results_ready")
+                and analysis.get("results") is None
+            )
         )
         self.analysis_panel.set_request_state(state)
         self.request_status_label.setText(self.analysis_panel.stage.text())
@@ -653,6 +692,10 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             area = self.area_panel.selection()
             self.request_controller.start(prompt, area, ids)
             self.setCurrentWidget(self.analysis_tab)
+        except ManualAreaRequired as error:
+            self.analysis_panel.set_notice(error.guidance)
+            self.area_panel.message.setText(error.guidance)
+            self.setCurrentWidget(self.inputs_tab)
         except (ValueError, OSError, KeyError) as error:
             self.analysis_panel.set_error(str(error))
             self.setCurrentWidget(self.analysis_tab)
@@ -739,6 +782,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def _account_changed(self, previous, current):
         self.area_panel.reset()
+        self._restore_draft_inputs(accepted_fallback=False)
         self.main_ui.user_email = None
         self.set_account_email(None)
         self._discard_capture()
