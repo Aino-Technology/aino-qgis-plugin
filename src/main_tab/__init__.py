@@ -46,6 +46,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.session = osm_parser.session
         handles = []
         self._handles = handles
+        self._shutdown = False
         self.destroyed.connect(lambda: [handle.abort() for handle in handles])
         self.session.account_changed.connect(self._account_changed)
         self.first_step = True
@@ -65,10 +66,42 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.subscriptions_response = None
         self.trial_label.setVisible(False)
         self.trial_label.setText("Trial subscription")
-        self.prompts_label.setGeometry(165, 102, 365, 36)
+        self._setup_request_layout()
         self.prompts_label.setWordWrap(True)
         self.prompts_label.setTextFormat(Qt.TextFormat.PlainText)
         self.prompts_label.setText("Aino checks credits and limits on submission.")
+
+    def _setup_request_layout(self):
+        layout = QtWidgets.QVBoxLayout(self.main_tab)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(12)
+        for label in (
+            self.label,
+            self.label_3,
+            self.prompts_label,
+            self.trial_label,
+            self.request_status_label,
+        ):
+            label.setWordWrap(True)
+            label.setMinimumWidth(0)
+            label.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Preferred,
+            )
+        self.prompt_field.setMinimumHeight(140)
+        self.go_button.setMinimumHeight(42)
+        for widget in (
+            self.label,
+            self.label_3,
+            self.trial_label,
+            self.prompts_label,
+            self.prompt_field,
+            self.go_button,
+            self.request_status_label,
+        ):
+            layout.addWidget(widget)
+        layout.addStretch()
+        self.tabBar().setUsesScrollButtons(True)
 
     def _setup_inputs(self):
         self._capture = None
@@ -259,7 +292,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.detach_button.hide()
         self.removeTab(self.indexOf(self.upload_tab))
         QgsProject.instance().cleared.connect(self._project_sync_cleared)
-        QgsProject.instance().readProject.connect(lambda *args: self._resume_sync())
+        QgsProject.instance().readProject.connect(self._resume_sync)
         self.session.authenticated.connect(self._resume_sync)
 
     def _sync_prepared(self):
@@ -755,14 +788,35 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def showEvent(self, event):
         super().showEvent(event)
-        self._resume_sync()
         self.area_panel.set_preview_visible(True)
 
     def suspend_map_interaction(self):
         self.area_panel.set_preview_visible(False)
+        self._restore_map_tool()
 
     def shutdown_map_interaction(self):
         self.area_panel.close()
+
+    def shutdown(self):
+        if self._shutdown:
+            return
+        self._shutdown = True
+        self.request_controller.close()
+        self.result_controller.close()
+        self.analysis_controller.close()
+        self.sync_controller.close()
+        self.shutdown_map_interaction()
+        self._discard_capture()
+        for handle in self._handles:
+            handle.abort()
+        self._handles.clear()
+        for signal, slot in (
+            (self.session.account_changed, self._account_changed),
+            (self.session.authenticated, self._resume_sync),
+            (QgsProject.instance().cleared, self._project_sync_cleared),
+            (QgsProject.instance().readProject, self._resume_sync),
+        ):
+            signal.disconnect(slot)
 
     def hideEvent(self, event):
         self.suspend_map_interaction()

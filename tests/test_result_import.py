@@ -874,10 +874,13 @@ def test_xy_add_to_xyz_managed_layer_must_not_drop_feature(qgis_app, tmp_path):
     project.clear()
 
 
+@pytest.mark.parametrize("explicit_close", [True, False])
 def test_close_during_storage_worker_suppresses_delivery(
-    client, local_api, wait_for, tmp_path, monkeypatch
+    client, local_api, wait_for, tmp_path, monkeypatch, explicit_close
 ):
+    import gc
     import threading
+    import weakref
     from qgis.PyQt import sip
     from qgis.PyQt.QtCore import QTimer
     from src.results import download
@@ -908,11 +911,21 @@ def test_close_during_storage_worker_suppresses_delivery(
     alive = []
     QTimer.singleShot(0, lambda: alive.append(True))
     wait_for(lambda: alive)
-    workers = downloader._workers
-    downloader.close()
+    workers = weakref.ref(downloader._workers)
+    worker_ref = weakref.ref(downloader.worker)
+    if explicit_close:
+        downloader.close()
     sip.delete(downloader)
-    release.set()
-    wait_for(lambda: not workers, timeout=10000)
+    del downloader
+    gc.collect()
+    try:
+        worker = worker_ref()
+        assert worker is not None
+        assert not sip.isdeleted(worker) and worker.isRunning()
+        assert worker.isInterruptionRequested()
+    finally:
+        release.set()
+        wait_for(lambda: not workers(), timeout=10000)
     assert not replies
 
 

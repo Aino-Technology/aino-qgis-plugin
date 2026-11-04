@@ -591,8 +591,7 @@ def test_default_go_prepares_snapshot_and_repeated_ready_never_restarts(
         dialog.close()
         assert not any(call[1].endswith("/actions") for call in api.calls)
     finally:
-        dialog.analysis_controller.close()
-        dialog.sync_controller.close()
+        dialog.shutdown()
         sip.delete(dialog)
         sip.delete(canvas)
         sip.delete(session)
@@ -883,8 +882,7 @@ def test_native_rejection_controls_and_notice_survive_restart(
     finally:
         for dialog in dialogs:
             dialog.close()
-            dialog.analysis_controller.close()
-            dialog.sync_controller.close()
+            dialog.shutdown()
             sip.delete(dialog)
         sip.delete(canvas)
         sip.delete(session)

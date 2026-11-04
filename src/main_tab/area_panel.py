@@ -114,8 +114,6 @@ class AreaPanel(QWidget):
         self.inputs.itemChanged.connect(lambda *_: self.selection_changed.emit())
         if self.preview:
             self.destroyed.connect(self.preview.close)
-        owned_handles = self._area_handles
-        self.destroyed.connect(lambda: [handle.abort() for handle in owned_handles])
         self.project.layersAdded.connect(self.refresh_layers)
         self.project.layerTreeRoot().addedChildren.connect(self.refresh_layers)
         self.project.layersRemoved.connect(self.refresh_layers)
@@ -357,6 +355,7 @@ class AreaPanel(QWidget):
         self.cancel_capture()
         self._area_generation += 1
         for handle in self._area_handles:
+            self.destroyed.disconnect(handle.abort)
             handle.abort()
         self._area_handles.clear()
         self._area_key = None
@@ -382,6 +381,7 @@ class AreaPanel(QWidget):
         self._area_generation += 1
         generation = self._area_generation
         for handle in self._area_handles:
+            self.destroyed.disconnect(handle.abort)
             handle.abort()
         self._area_handles.clear()
         self.set_resolved_area(None)
@@ -392,6 +392,9 @@ class AreaPanel(QWidget):
             return
 
         def finished(response):
+            if handle in self._area_handles:
+                self.destroyed.disconnect(handle.abort)
+                self._area_handles.remove(handle)
             if generation != self._area_generation or api.session.account_id != key[1]:
                 return
             from src.project_sync.recovery import project_identity
@@ -411,9 +414,11 @@ class AreaPanel(QWidget):
             self._area_cache[key] = copy.deepcopy(data.get("area"))
             self.set_resolved_area(data.get("area"))
 
-        self._area_handles.append(
-            api.send("GET", f"/integrations/qgis/analyses/{task}/area", None, finished)
+        handle = api.send(
+            "GET", f"/integrations/qgis/analyses/{task}/area", None, finished
         )
+        self._area_handles.append(handle)
+        self.destroyed.connect(handle.abort)
 
     def results_imported(self, layer_ids):
         if not self.initially_empty or self.zoomed_result or self.canvas is None:
@@ -498,6 +503,7 @@ class AreaPanel(QWidget):
     def close(self):
         self.cancel_capture()
         for handle in self._area_handles:
+            self.destroyed.disconnect(handle.abort)
             handle.abort()
         self._area_handles.clear()
         if self.preview:

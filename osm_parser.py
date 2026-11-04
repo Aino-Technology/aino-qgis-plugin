@@ -1,3 +1,4 @@
+from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
@@ -22,6 +23,7 @@ from src.login.login_tab import LoginDialog
 from src.login.signup_tab import SignupDialog
 from src.login import exec_dialog
 from src.main_tab import OsmParserDialogMain
+from src.dock import AinoDockWidget
 
 
 class OsmParser:
@@ -37,6 +39,7 @@ class OsmParser:
         """
         # Save reference to the QGIS interface
         self.main_dlg = None
+        self.dock = None
         self.start_dlg = None
         self.iface = iface
         # initialize plugin directory
@@ -82,12 +85,26 @@ class OsmParser:
 
     def _own_auth_dialog(self, dialog):
         self._auth_dialogs.add(dialog)
-        dialog.destroyed.connect(lambda: self._auth_dialogs.discard(dialog))
+        dialog.destroyed.connect(lambda: self._auth_destroyed(dialog))
         return dialog
 
+    def _auth_destroyed(self, dialog):
+        self._auth_dialogs.discard(dialog)
+        if self._login_dialog is dialog:
+            self._login_dialog = None
+
+    def _auth_parent(self, parent=None):
+        main_window = getattr(self.iface, "mainWindow", lambda: None)
+        for candidate in (parent, self.dock, main_window()):
+            if candidate is not None and not sip.isdeleted(candidate):
+                return candidate
+        return None
+
     def _get_login_dialog(self, parent=None):
+        if self._login_dialog is not None and sip.isdeleted(self._login_dialog):
+            self._login_dialog = None
         if self._login_dialog is None:
-            dialog = self._own_auth_dialog(LoginDialog(self, parent))
+            dialog = self._own_auth_dialog(LoginDialog(self, self._auth_parent(parent)))
             self._login_dialog = dialog
             dialog.finished.connect(lambda result: self._login_closed(dialog))
         return self._login_dialog
@@ -95,10 +112,10 @@ class OsmParser:
     def _require_login(self):
         if self.unloading:
             return
-        if self._login_dialog is None:
-            self._get_login_dialog().open()
-        self._login_dialog.raise_()
-        self._login_dialog.activateWindow()
+        dialog = self._get_login_dialog()
+        dialog.open()
+        dialog.raise_()
+        dialog.activateWindow()
 
     def exec_login(self, parent=None):
         """Run the plugin-owned login dialog unless unload has started."""
@@ -110,7 +127,7 @@ class OsmParser:
         """Run a plugin-owned signup dialog without reopening it after unload."""
         if self.unloading:
             return False
-        dialog = self._own_auth_dialog(SignupDialog(self, parent))
+        dialog = self._own_auth_dialog(SignupDialog(self, self._auth_parent(parent)))
         try:
             return bool(exec_dialog(dialog)) and not self.unloading
         finally:
@@ -231,16 +248,17 @@ class OsmParser:
             return
         self._unloading = True
         if self.main_dlg is not None:
-            self.main_dlg.request_controller.close()
-            self.main_dlg.result_controller.close()
-            self.main_dlg.analysis_controller.close()
-            self.main_dlg.sync_controller.close()
+            self.main_dlg.shutdown()
         self.api_client.close()
         for dialog in tuple(self._auth_dialogs):
             dialog.close()
         self._auth_dialogs.clear()
-        if self.main_dlg is not None:
-            self.main_dlg.close()
+        if self.dock is not None:
+            self.dock.hide()
+            self.iface.removeDockWidget(self.dock)
+            self.dock.deleteLater()
+            self.dock = None
+            self.main_dlg = None
         self.session.clear()
         for action in self.actions:
             self.iface.removePluginMenu(
@@ -254,11 +272,19 @@ class OsmParser:
         if self.unloading:
             return
 
+        if self.dock is not None and sip.isdeleted(self.dock):
+            self.dock = None
+            self.main_dlg = None
+            self.first_start = True
+
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start:
             self.first_start = False
             self.main_dlg = OsmParserDialogMain(osm_parser=self)
+            self.dock = AinoDockWidget(self.iface, self.main_dlg)
+            self.dock.hide()
+            self.dock.register(self.iface)
 
         # show the dialog
         if not self.user_logged_in:
@@ -269,8 +295,10 @@ class OsmParser:
             if result:
                 self.main_dlg.update_interface_with_restrictions_start()
                 self.main_dlg.set_account_email(self.user_email)
-                self.main_dlg.show()
+                self.dock.show()
+                self.dock.raise_()
 
         else:
             self.main_dlg.update_interface_with_restrictions_start()
-            self.main_dlg.show()
+            self.dock.show()
+            self.dock.raise_()

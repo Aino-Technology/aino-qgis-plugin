@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 from qgis.PyQt.QtCore import QSettings, QThread, QTimer
-from qgis.PyQt.QtWidgets import QWidget
+from qgis.PyQt.QtWidgets import QMainWindow, QWidget
 from qgis.core import QgsProject
 
 
@@ -251,10 +251,12 @@ def test_plugin_fresh_locale_resources_and_unload(
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     QSettings().remove("locale/userLocale")
-    window = QWidget()
+    window = QMainWindow()
     removed = []
     iface = SimpleNamespace(
         mainWindow=lambda: window,
+        addDockWidget=window.addDockWidget,
+        removeDockWidget=window.removeDockWidget,
         addToolBarIcon=lambda action: None,
         addPluginToMenu=lambda *args: None,
         removePluginMenu=lambda *args: removed.append(True),
@@ -555,11 +557,13 @@ def test_unload_closes_nested_owned_auth_dialogs_without_reopening(
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
-    window = QWidget()
+    window = QMainWindow()
     unrelated = QWidget()
     unrelated.show()
     iface = SimpleNamespace(
         mainWindow=lambda: window,
+        addDockWidget=window.addDockWidget,
+        removeDockWidget=window.removeDockWidget,
         addToolBarIcon=lambda action: None,
         addPluginToMenu=lambda *args: None,
         removePluginMenu=lambda *args: None,
@@ -587,6 +591,9 @@ def test_unload_closes_nested_owned_auth_dialogs_without_reopening(
             dialog.check_credentials()
             wait_for(lambda: len(local_api.requests) == 1)
             plugin.unload()
+            import gc
+
+            gc.collect()
             dialog.check_credentials()
             plugin.session.require_login()
             plugin.run()
@@ -628,7 +635,7 @@ def test_unload_closes_nested_owned_auth_dialogs_without_reopening(
         assert not errors
         assert visible_after_unload == [False]
         assert all(not visible(dialog) for dialog in owned)
-        assert not visible(plugin.main_dlg)
+        assert plugin.main_dlg is None and plugin.dock is None
         assert unrelated.isVisible()
         assert plugin.api_client.pending_count == 0
         assert plugin.session.access_token is None

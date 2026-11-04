@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 from urllib.parse import urlencode
 
-from qgis.PyQt.QtCore import QObject, QThread, QTimer, QUrl, pyqtSignal
+from qgis.PyQt.QtCore import QObject, QThread, QTimer, QUrl, pyqtSignal, pyqtSlot
 from qgis.PyQt.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from .storage import build_storage, read_document
@@ -16,6 +16,10 @@ class _StorageWorker(QThread):
     def __init__(self, temporary, target, result):
         super().__init__()
         self.temporary, self.target, self.result = temporary, target, result
+
+    @pyqtSlot()
+    def interrupt(self):
+        self.requestInterruption()
 
     def run(self):
         try:
@@ -57,10 +61,6 @@ class ResultDownloader(QObject):
         self.active = False
         api.session.account_changed.connect(self._account_changed)
         self._workers = set()
-        workers = self._workers
-        self.destroyed.connect(
-            lambda: [worker.requestInterruption() for worker in workers]
-        )
 
     def download_results(self, task_id: str, manifest: dict, target_dir: str, callback):
         self.abort()
@@ -211,6 +211,7 @@ class ResultDownloader(QObject):
             self.temporary = None
             self.worker = worker
             self._workers.add(worker)
+            self.destroyed.connect(worker.interrupt)
             worker.generation = generation
             worker.completed.connect(self._worker_completed)
             workers = self._workers

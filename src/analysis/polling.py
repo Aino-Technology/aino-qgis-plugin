@@ -60,9 +60,8 @@ class PollingController(QObject):
         self.revision = -1
         owned = []
         self._owned = owned
-        self.destroyed.connect(lambda: [handle.abort() for handle in owned])
-        scheduler_owner = self.scheduler
-        self.destroyed.connect(lambda: scheduler_owner.stop())
+        if scheduler is not None:
+            self.destroyed.connect(scheduler.stop)
 
     def watch(self, task_id):
         if self.task_id == task_id:
@@ -76,9 +75,11 @@ class PollingController(QObject):
     def stop(self):
         self.generation += 1
         self.scheduler.stop()
-        if self.handle is not None and self.handle.pending:
+        if self.handle is not None:
+            self.destroyed.disconnect(self.handle.abort)
             self.handle.abort()
         self.handle = None
+        self._owned.clear()
         self.task_id = None
 
     def _poll(self):
@@ -91,7 +92,9 @@ class PollingController(QObject):
         def complete(response):
             if generation != self.generation:
                 return
+            self.destroyed.disconnect(self.handle.abort)
             self.handle = None
+            self._owned.clear()
             if response.ok and valid_state(response.data, task_id):
                 self.failures = 0
                 data = response.data
@@ -116,3 +119,4 @@ class PollingController(QObject):
             "GET", f"/integrations/qgis/analyses/{task_id}", None, complete
         )
         self._owned.append(self.handle)
+        self.destroyed.connect(self.handle.abort)

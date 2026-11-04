@@ -194,7 +194,7 @@ def test_plugin_owned_signout_and_unload_complete_deferred_destruction(
     import importlib.util
     import sys
     from pathlib import Path
-    from qgis.PyQt.QtWidgets import QWidget
+    from qgis.PyQt.QtWidgets import QMainWindow
     import src
 
     root = Path(__file__).resolve().parents[1]
@@ -206,9 +206,11 @@ def test_plugin_owned_signout_and_unload_complete_deferred_destruction(
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
-    window = QWidget()
+    window = QMainWindow()
     iface = SimpleNamespace(
         mainWindow=lambda: window,
+        addDockWidget=window.addDockWidget,
+        removeDockWidget=window.removeDockWidget,
         addToolBarIcon=lambda action: None,
         addPluginToMenu=lambda *args: None,
         removePluginMenu=lambda *args: None,
@@ -216,11 +218,50 @@ def test_plugin_owned_signout_and_unload_complete_deferred_destruction(
     )
     plugin = module.classFactory(iface)
     plugin.initGui()
+    plugin._require_login()
+    early_login = plugin._login_dialog
+    assert early_login.parent() is window
+    early_login.close()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    assert sip.isdeleted(early_login) and plugin._login_dialog is None
     plugin.session.set_access_token(token())
     plugin.user_email = "synthetic@example.invalid"
     plugin.run()
     dialog = plugin.main_dlg
+    dock = plugin.dock
     wait_for(lambda: len(local_api.requests) == 2)
+    controllers = (
+        dialog.request_controller,
+        dialog.result_controller,
+        dialog.analysis_controller,
+        dialog.sync_controller,
+    )
+    timer = dialog.analysis_controller.polling.scheduler.timer
+    monkeypatch.setattr(
+        dialog, "update_interface_with_restrictions_start", lambda: None
+    )
+    restored = []
+    monkeypatch.setattr(
+        dialog.request_controller, "restore", lambda: restored.append(True)
+    )
+    plugin.run()
+    dock.hide()
+    qgis_app.processEvents()
+    plugin.run()
+    qgis_app.processEvents()
+    assert plugin.dock is dock and plugin.main_dlg is dialog
+    assert controllers == (
+        dialog.request_controller,
+        dialog.result_controller,
+        dialog.analysis_controller,
+        dialog.sync_controller,
+    )
+    assert dialog.analysis_controller.polling.scheduler.timer is timer
+    assert not restored and len(plugin.actions) == 1
+    login = plugin._get_login_dialog()
+    assert login.parent() is dock
+    login.close()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     reopened = []
     monkeypatch.setattr(plugin, "run", lambda: reopened.append(True))
     dialog.sign_out()
@@ -234,7 +275,33 @@ def test_plugin_owned_signout_and_unload_complete_deferred_destruction(
     capture.cancel = cancel_capture
     dialog.request_controller.capture = lambda *args: capture
     dialog.request_controller.start("parks", None, [])
+    dock.hide()
+    qgis_app.processEvents()
+    assert not capture.cancelled
+    assert not dialog.request_controller._closed
+    assert not dialog.analysis_controller._closed
+    assert not dialog.sync_controller._closed
+    assert not dialog.result_controller.closed
+    dock.show()
+    qgis_app.processEvents()
+    assert dialog.request_controller.busy and not capture.cancelled
+    close_order = []
+    for name, controller in (
+        ("request", dialog.request_controller),
+        ("result", dialog.result_controller),
+        ("analysis", dialog.analysis_controller),
+        ("sync", dialog.sync_controller),
+    ):
+        close = controller.close
+
+        def traced_close(name=name, close=close):
+            close_order.append(name)
+            close()
+
+        monkeypatch.setattr(controller, "close", traced_close)
     plugin.unload()
+    assert close_order == ["request", "result", "analysis", "sync"]
+    assert plugin.main_dlg is None and plugin.dock is None
     assert capture.cancelled
     assert dialog.request_controller._closed
     assert dialog.analysis_controller._closed
@@ -244,10 +311,13 @@ def test_plugin_owned_signout_and_unload_complete_deferred_destruction(
     assert plugin.api_client.pending_count == 0
     destroyed = []
     dialog.destroyed.connect(lambda: destroyed.append(True))
-    dialog.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     qgis_app.processEvents()
     assert sip.isdeleted(dialog) and destroyed == [True]
+    assert sip.isdeleted(dock)
     assert plugin.session.account_id is None
+    from qgis.core import QgsProject
+
+    QgsProject.instance().clear()
     window.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
