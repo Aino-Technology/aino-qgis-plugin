@@ -417,3 +417,121 @@ def test_interrupted_adoption_never_reuses_old_snapshot(request_setup):
     request.restore()
     assert request.state["phase"] == "recapture"
     assert not api.calls
+
+
+@pytest.mark.parametrize("reconstruct_at", [None, "before_retry", "after_retry"])
+def test_failed_snapshot_retry_starts_once_with_new_snapshot(
+    request_setup, reconstruct_at
+):
+    request, capture, api, journal, project = request_setup
+    rebuilt = []
+
+    def reconstruct(current):
+        current.close()
+        current.analysis.close()
+        current.sync.close()
+        sync = SyncController(api, journal=journal)
+        analysis = AnalysisController(api, journal, project, scheduler=Clock())
+        restored = RequestController(
+            project, api.session, journal, sync, analysis, Capture()
+        )
+        rebuilt.append(restored)
+        restored.restore()
+        return restored
+
+    try:
+        request.start("parks", None, [])
+        capture.calls[-1][2]([])
+        api.answer(
+            {
+                "project_id": 17,
+                "link_id": str(uuid4()),
+                "project_url": "https://example.invalid/17",
+            }
+        )
+        failed_snapshot = str(uuid4())
+        api.answer(
+            {
+                "id": failed_snapshot,
+                "project_id": 17,
+                "state": "failed",
+                "layers": [],
+                "errors": [],
+            }
+        )
+        assert request.state["phase"] == "recapture"
+        old_operation = request.state["sync_operation_id"]
+        if reconstruct_at == "before_retry":
+            request = reconstruct(request)
+        request.retry()
+        request.capture.calls[-1][2]([])
+        new_operation = request.sync.state["operation_id"]
+        assert new_operation != old_operation
+        snapshot_body = api.calls[-1][2]
+        if reconstruct_at == "after_retry":
+            request = reconstruct(request)
+            assert api.calls[-1][2] == snapshot_body
+        snapshot = {
+            "id": str(uuid4()),
+            "project_id": 17,
+            "state": "ready",
+            "layers": [],
+        }
+        api.answer(snapshot)
+        request.sync.ready.emit(snapshot)
+        starts = [
+            call for call in api.calls if call[1] == "/integrations/qgis/analyses"
+        ]
+        assert len(starts) == 1
+        assert starts[0][2]["snapshot_id"] == snapshot["id"] != failed_snapshot
+        saved = journal.load(project_identity(project), "account-a")["request"]
+        assert saved["sync_operation_id"] == new_operation
+        assert saved["snapshot_id"] == snapshot["id"]
+    finally:
+        for restored in rebuilt:
+            restored.close()
+            restored.analysis.close()
+            restored.sync.close()
+            sip.delete(restored.analysis)
+            sip.delete(restored.sync)
+            sip.delete(restored)
+
+
+def test_uncertain_snapshot_retry_preserves_sync_association(request_setup):
+    request, capture, api, *_ = request_setup
+    request.start("parks", None, [])
+    capture.calls[-1][2]([])
+    api.answer(
+        {
+            "project_id": 17,
+            "link_id": str(uuid4()),
+            "project_url": "https://example.invalid/17",
+        }
+    )
+    operation = request.state["sync_operation_id"]
+    body = api.calls[-1][2]
+    api.answer(status=0, error="network_error")
+    request.retry()
+    assert request.state["sync_operation_id"] == operation
+    assert api.calls[-1][2] == body
+    assert len(capture.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "prompt, title, filename, expected",
+    [
+        ("Parks in Berlin\nAdditional details", "", "", "Parks in Berlin"),
+        ("A" * 140 + "\nAdditional details", "", "", "A" * 120),
+        ("Prompt\nDetails", "T" * 150, "/tmp/file.qgz", "T" * 150),
+        ("Prompt\nDetails", "", "/tmp/saved-project.qgz", "saved-project"),
+    ],
+)
+def test_first_link_title_uses_bounded_first_prompt_line(
+    request_setup, prompt, title, filename, expected
+):
+    request, capture, api, _, project = request_setup
+    project.setTitle(title)
+    project.setFileName(filename)
+    request.start(prompt, None, [])
+    capture.calls[-1][2]([])
+    assert api.calls[-1][2]["title"] == expected

@@ -98,7 +98,7 @@ class RequestController(QObject):
             "project_title": (
                 self.project.title()
                 or Path(self.project.fileName()).stem
-                or prompt.strip()
+                or prompt.strip().splitlines()[0][:120]
             )[:500],
         }
         self._save()
@@ -292,7 +292,8 @@ class RequestController(QObject):
         self._scope()
         if self.state.get("phase") == "recapture":
             self.generation += 1
-            self.state.pop("error", None)
+            for key in ("error", "sync_operation_id", "snapshot_id", "project_id"):
+                self.state.pop(key, None)
             self.state["phase"] = "capturing"
             self._save()
             self._capture()
