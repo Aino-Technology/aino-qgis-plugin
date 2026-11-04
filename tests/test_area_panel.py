@@ -238,3 +238,137 @@ def test_resolved_area_label_and_provider_coverage_remain_visible(qgis_app):
         widget.close()
         sip.delete(widget)
         sip.delete(canvas)
+
+
+@pytest.mark.parametrize("failure", ["network", "wrong_revision"])
+def test_failed_area_revision_can_retry_and_success_stays_cached(qgis_app, failure):
+    from types import SimpleNamespace
+
+    from src.api_client import ApiResponse
+    from src.project_sync.recovery import project_identity
+
+    widget, canvas = panel(qgis_app)
+    identity = project_identity(QgsProject.instance())
+    calls = []
+    api = SimpleNamespace(
+        session=SimpleNamespace(account_id="a"),
+        send=lambda method, path, payload, callback: calls.append(callback)
+        or SimpleNamespace(abort=lambda: None),
+    )
+    state = {"task_id": "task", "latest": {"area_revision": 1}}
+    area = {
+        "geometry": {
+            "type": "Polygon",
+            "coordinates": [[[0, 0], [1, 0], [1, 1], [0, 0]]],
+        }
+    }
+    try:
+        widget.update_analysis(api, state, identity)
+        widget.update_analysis(api, state, identity)
+        assert len(calls) == 1
+        calls[0](
+            ApiResponse(0, error="network")
+            if failure == "network"
+            else ApiResponse(200, {"task_id": "task", "revision": 2, "area": area})
+        )
+        widget.update_analysis(api, state, identity)
+        assert len(calls) == 2
+        calls[1](ApiResponse(200, {"task_id": "task", "revision": 1, "area": area}))
+        widget.update_analysis(api, state, identity)
+        assert len(calls) == 2
+        assert widget.resolved == area
+    finally:
+        widget.close()
+        sip.delete(widget)
+        sip.delete(canvas)
+
+
+@pytest.mark.parametrize(
+    "kind,wkt",
+    [
+        ("Point", "Point (13 52)"),
+        ("Point", "Point (0 0)"),
+        ("LineString", "LineString (13 52,13 53)"),
+        ("LineString", "LineString (13 52,14 52)"),
+    ],
+)
+def test_first_import_degenerate_extent_gets_visible_padding(qgis_app, kind, wkt):
+    project = QgsProject.instance()
+    project.clear()
+    widget, canvas = panel(qgis_app)
+    layer = QgsVectorLayer(kind + "?crs=EPSG:4326", "Result", "memory")
+    feature = QgsFeature()
+    feature.setGeometry(QgsGeometry.fromWkt(wkt))
+    layer.dataProvider().addFeatures([feature])
+    layer.updateExtents()
+    project.addMapLayer(layer)
+    try:
+        widget.results_imported([layer.id()])
+        assert widget.zoomed_result
+        extent = canvas.extent()
+        assert extent.isFinite() and not extent.isEmpty()
+        from qgis.core import QgsCoordinateTransform
+
+        center = QgsCoordinateTransform(
+            layer.crs(),
+            canvas.mapSettings().destinationCrs(),
+            project.transformContext(),
+        ).transform(layer.extent().center())
+        assert extent.contains(center)
+        assert extent.width() >= 100 and extent.height() >= 100
+        canvas.setExtent(QgsRectangle(1, 1, 20, 20))
+        previous = QgsRectangle(canvas.extent())
+        widget.results_imported([layer.id()])
+        assert canvas.extent() == previous
+    finally:
+        widget.close()
+        sip.delete(widget)
+        project.clear()
+        sip.delete(canvas)
+
+
+def test_loading_nonempty_project_does_not_reenable_first_import_zoom(
+    qgis_app, tmp_path
+):
+    project = QgsProject.instance()
+    project.clear()
+    widget, canvas = panel(qgis_app)
+    path = tmp_path / "existing.geojson"
+    path.write_text(
+        '{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},"geometry":{"type":"Polygon","coordinates":[[[13,52],[14,52],[14,53],[13,52]]]}}]}'
+    )
+    layer = QgsVectorLayer(str(path), "Existing", "ogr")
+    project.addMapLayer(layer)
+    try:
+        assert project.write(str(tmp_path / "existing.qgs"))
+        assert project.read(str(tmp_path / "existing.qgs"))
+        assert not widget.initially_empty
+        canvas.setExtent(QgsRectangle(0, 0, 100, 100))
+        previous = QgsRectangle(canvas.extent())
+        widget.results_imported([next(iter(project.mapLayers()))])
+        assert canvas.extent() == previous
+    finally:
+        widget.close()
+        sip.delete(widget)
+        project.clear()
+        sip.delete(canvas)
+
+
+def test_null_geometry_result_does_not_consume_first_zoom(qgis_app):
+    project = QgsProject.instance()
+    project.clear()
+    widget, canvas = panel(qgis_app)
+    layer = QgsVectorLayer("Point?crs=EPSG:4326", "No geometry", "memory")
+    layer.dataProvider().addFeatures([QgsFeature()])
+    layer.updateExtents()
+    project.addMapLayer(layer)
+    try:
+        previous = QgsRectangle(canvas.extent())
+        widget.results_imported([layer.id()])
+        assert not widget.zoomed_result
+        assert canvas.extent() == previous
+    finally:
+        widget.close()
+        sip.delete(widget)
+        project.clear()
+        sip.delete(canvas)

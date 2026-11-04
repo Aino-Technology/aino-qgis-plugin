@@ -7,6 +7,7 @@ from qgis.core import (
     QgsWkbTypes,
 )
 from qgis.gui import QgsMapToolEmitPoint
+from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (
     QComboBox,
@@ -19,6 +20,7 @@ from qgis.PyQt.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
 from src.project_sync.area import capture_area
 from src.project_sync.area_preview import AreaPreview
 
@@ -118,6 +120,7 @@ class AreaPanel(QWidget):
         self.project.layerTreeRoot().addedChildren.connect(self.refresh_layers)
         self.project.layersRemoved.connect(self.refresh_layers)
         self.project.cleared.connect(self.reset)
+        self.project.readProject.connect(self._project_loaded)
         if canvas is not None:
             canvas.destinationCrsChanged.connect(self._crs_changed)
             self.preview.failed.connect(self.message.setText)
@@ -214,7 +217,9 @@ class AreaPanel(QWidget):
     def refresh_layers(self, *args):
         checked = set(self.selected_input_ids())
         selected = self.polygons.currentData()
-        for signal in self._layer_signals:
+        for layer, signal in self._layer_signals:
+            if sip.isdeleted(layer):
+                continue
             try:
                 signal.disconnect(self._polygon_changed)
             except (TypeError, RuntimeError):
@@ -244,7 +249,7 @@ class AreaPanel(QWidget):
                     layer.crsChanged,
                 ):
                     signal.connect(self._polygon_changed)
-                    self._layer_signals.append(signal)
+                    self._layer_signals.append((layer, signal))
         index = self.polygons.findData(selected)
         if index >= 0:
             self.polygons.setCurrentIndex(index)
@@ -363,6 +368,9 @@ class AreaPanel(QWidget):
         self.mode.setCurrentIndex(0)
         self._display()
 
+    def _project_loaded(self, *args):
+        self.initially_empty = not bool(self.project.mapLayers())
+
     def update_analysis(self, api, state, identity):
         latest = state.get("latest") or {}
         task = state.get("task_id")
@@ -392,11 +400,13 @@ class AreaPanel(QWidget):
                 return
             data = response.data
             if not response.ok or not isinstance(data, dict):
+                self._area_key = None
                 self.message.setText(
                     "Could not load the analysis area. " + response.message
                 )
                 return
             if data.get("task_id") != task or data.get("revision") != revision:
+                self._area_key = None
                 return
             self._area_cache[key] = copy.deepcopy(data.get("area"))
             self.set_resolved_area(data.get("area"))
@@ -408,20 +418,70 @@ class AreaPanel(QWidget):
     def results_imported(self, layer_ids):
         if not self.initially_empty or self.zoomed_result or self.canvas is None:
             return
-        from qgis.core import QgsCoordinateTransform, QgsRectangle
+        from qgis.core import (
+            Qgis,
+            QgsCoordinateTransform,
+            QgsPointXY,
+            QgsRectangle,
+            QgsUnitTypes,
+        )
 
-        bounds = QgsRectangle()
+        bounds = None
         for layer_id in layer_ids:
             layer = self.project.mapLayer(layer_id)
-            if layer is None or layer.extent().isEmpty():
+            if layer is None or layer.featureCount() == 0:
+                continue
+            extent = layer.extent()
+            if not extent.isFinite():
                 continue
             transform = QgsCoordinateTransform(
                 layer.crs(),
                 self.canvas.mapSettings().destinationCrs(),
                 self.canvas.mapSettings().transformContext(),
             )
-            bounds.combineExtentWith(transform.transformBoundingBox(layer.extent()))
-        if not bounds.isEmpty():
+            if extent.isEmpty():
+                points = [
+                    transform.transform(
+                        QgsPointXY(
+                            extent.xMinimum() + extent.width() * index / 32,
+                            extent.yMinimum() + extent.height() * index / 32,
+                        )
+                    )
+                    for index in range(33)
+                ]
+                transformed = QgsRectangle(
+                    min(point.x() for point in points),
+                    min(point.y() for point in points),
+                    max(point.x() for point in points),
+                    max(point.y() for point in points),
+                )
+            else:
+                transformed = transform.transformBoundingBox(extent)
+            if not transformed.isFinite():
+                continue
+            bounds = (
+                QgsRectangle(transformed)
+                if bounds is None
+                else QgsRectangle(
+                    min(bounds.xMinimum(), transformed.xMinimum()),
+                    min(bounds.yMinimum(), transformed.yMinimum()),
+                    max(bounds.xMaximum(), transformed.xMaximum()),
+                    max(bounds.yMaximum(), transformed.yMaximum()),
+                )
+            )
+        if bounds is not None:
+            crs = self.canvas.mapSettings().destinationCrs()
+            minimum = (
+                0.002
+                if crs.isGeographic()
+                else 200
+                * QgsUnitTypes.fromUnitToUnitFactor(
+                    Qgis.DistanceUnit.Meters, crs.mapUnits()
+                )
+            )
+            width = max(bounds.width(), minimum)
+            height = max(bounds.height(), minimum)
+            bounds = QgsRectangle.fromCenterAndSize(bounds.center(), width, height)
             bounds.scale(1.1)
             self.canvas.setExtent(bounds)
             self.canvas.refresh()
