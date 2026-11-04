@@ -5,8 +5,7 @@ from qgis.PyQt import QtWidgets, uic
 from qgis.PyQt.QtCore import Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import QMessageBox
-from qgis.core import QgsProject, QgsVectorLayer
-from qgis.gui import QgsMapToolEmitPoint
+from qgis.core import QgsProject
 
 from src.analysis.controller import AnalysisController
 from src.analysis.request_controller import RequestController
@@ -14,10 +13,11 @@ from src.analysis.request_capture import RequestCapture
 from src.results.controller import ResultController
 from src.analysis.actions import ActionPanel, report_text
 from src.analysis.polling import TERMINAL
-from src.project_sync.area import capture_area
 from src.project_sync.layers import SnapshotCapture
 from src.project_sync.controller import SyncController
 from src.project_sync.styles import RenderReference
+
+from .area_panel import AreaPanel
 
 from .helpers import (
     update_scroll_area,
@@ -75,90 +75,37 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self._capture_directory = None
         self._capture_connections = []
         self._capture_generation = 0
-        self._center = None
-        self._point_tool = None
-        self._previous_map_tool = None
         self.prepared_inputs = None
-        self.area_mode.insertItem(0, "From request")
-        self.area_mode.setCurrentIndex(0)
-        self.area_mode.currentIndexChanged.connect(self._area_mode_changed)
-        self.radius_input.valueChanged.connect(self._discard_capture)
-        self.input_layers.itemChanged.connect(self._discard_capture)
-        self.center_button.clicked.connect(self._pick_center)
+        map_canvas = getattr(getattr(self.main_ui, "iface", None), "mapCanvas", None)
+        canvas = map_canvas() if callable(map_canvas) else None
+        self.area_panel = AreaPanel(canvas, QgsProject.instance(), self)
+        for widget in (
+            self.area_label,
+            self.area_mode,
+            self.center_button,
+            self.radius_input,
+            self.center_label,
+            self.inputs_label,
+            self.input_layers,
+        ):
+            widget.hide()
+        self.inputs_layout.insertWidget(0, self.area_panel)
+        self.area_mode = self.area_panel.mode
+        self.radius_input = self.area_panel.radius
+        self.input_layers = self.area_panel.inputs
+        self.area_panel.selection_changed.connect(self._discard_capture)
         self.preview_inputs_button.clicked.connect(lambda: self.prepare_inputs())
         self.cancel_capture_button.clicked.connect(self._discard_capture)
-        project = QgsProject.instance()
-        project.layersAdded.connect(self._refresh_input_layers)
-        project.layersRemoved.connect(self._refresh_input_layers)
-        project.cleared.connect(self._refresh_input_layers)
-        self._refresh_input_layers()
-        self._area_mode_changed()
 
     def _refresh_input_layers(self, *args):
         self._discard_capture()
-        checked = set(self.selected_input_ids())
-        self.input_layers.blockSignals(True)
-        self.input_layers.clear()
-        for layer in QgsProject.instance().layerTreeRoot().layerOrder():
-            if not isinstance(layer, QgsVectorLayer) or not layer.isSpatial():
-                continue
-            item = QtWidgets.QListWidgetItem(layer.name())
-            item.setData(Qt.ItemDataRole.UserRole, layer.id())
-            item.setToolTip(f"{layer.name()} — {layer.id()}")
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(
-                Qt.CheckState.Checked
-                if layer.id() in checked
-                else Qt.CheckState.Unchecked
-            )
-            self.input_layers.addItem(item)
-        self.input_layers.blockSignals(False)
+        self.area_panel.refresh_layers()
 
     def selected_input_ids(self):
-        return [
-            self.input_layers.item(index).data(Qt.ItemDataRole.UserRole)
-            for index in range(self.input_layers.count())
-            if self.input_layers.item(index).checkState() == Qt.CheckState.Checked
-        ]
-
-    def _area_mode_changed(self, *args):
-        self._discard_capture()
-        radius = self.area_mode.currentIndex() == 3
-        self.center_button.setEnabled(radius)
-        self.radius_input.setEnabled(radius)
-        self.center_label.setVisible(radius)
-        if not radius:
-            self._restore_map_tool()
-
-    def _pick_center(self):
-        self._discard_capture()
-        self._restore_map_tool()
-        canvas = self.main_ui.iface.mapCanvas()
-        self._previous_map_tool = canvas.mapTool()
-        self._point_tool = QgsMapToolEmitPoint(canvas)
-        self._point_tool.canvasClicked.connect(self._center_picked)
-        canvas.setMapTool(self._point_tool)
-        self.center_label.setText("Click the map to choose the radius center")
-
-    def _center_picked(self, point, button):
-        self._discard_capture()
-        canvas = self.main_ui.iface.mapCanvas()
-        self._center = ((point.x(), point.y()), canvas.mapSettings().destinationCrs())
-        self.center_label.setText(
-            f"Center: {point.x():.6f}, {point.y():.6f} ({self._center[1].authid()})"
-        )
-        self._restore_map_tool()
+        return self.area_panel.selected_input_ids()
 
     def _restore_map_tool(self):
-        if self._point_tool is not None:
-            canvas = self.main_ui.iface.mapCanvas()
-            if canvas.mapTool() == self._point_tool:
-                canvas.unsetMapTool(self._point_tool)
-                if self._previous_map_tool is not None:
-                    canvas.setMapTool(self._previous_map_tool)
-            self._point_tool.deleteLater()
-            self._point_tool = None
-            self._previous_map_tool = None
+        self.area_panel.cancel_capture()
 
     def _watch_capture(self, signal):
         signal.connect(self._discard_capture)
@@ -197,24 +144,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             project = QgsProject.instance()
             ids = self.selected_input_ids()
             layers = [project.mapLayer(layer_id) for layer_id in ids]
-            mode = ["prompt", "extent", "polygon", "radius"][
-                self.area_mode.currentIndex()
-            ]
-            center = None
-            if mode == "radius":
-                if (
-                    self._center is None
-                    or self._center[1] != canvas.mapSettings().destinationCrs()
-                ):
-                    raise ValueError("Pick the center in the current map CRS")
-                center = self._center[0]
-            area = (
-                {}
-                if mode == "prompt"
-                else capture_area(
-                    mode, canvas, layers, center, self.radius_input.value()
-                )
-            )
+            area = self.area_panel.selection() or {}
             reference = RenderReference(canvas.mapSettings())
             if directory is None:
                 previews = self.sync_controller.journal.directory / "previews"
@@ -414,6 +344,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         if hasattr(self, "analysis_controller"):
             self.analysis_controller.bind(QgsProject.instance())
         self.sync_controller.state = None
+        self.area_panel.reset()
         self.project_id = None
         self.project_link_text.clear()
         self.sync_status.clear()
@@ -492,6 +423,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.result_controller.completed.connect(
             lambda ids: self.results_retry.setEnabled(False)
         )
+        self.result_controller.completed.connect(self.area_panel.results_imported)
         self.analysis_cancel.clicked.connect(self._cancel_analysis)
         self.analysis_link.clicked.connect(self._open_analysis)
 
@@ -508,6 +440,9 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self.result_controller.pause()
             self.results_retry.setEnabled(False)
         latest = state.get("latest") or {}
+        self.area_panel.update_analysis(
+            self.api_client, state, self.analysis_controller.identity
+        )
         rejection = state.get("last_rejection") or {}
         self.analysis_rejection.setText(
             (
@@ -713,27 +648,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
     def send_osm_request(self, prompt):
         try:
             ids = self.selected_input_ids()
-            mode = ["prompt", "extent", "polygon", "radius"][
-                self.area_mode.currentIndex()
-            ]
-            area = None
-            if mode != "prompt":
-                canvas = self.main_ui.iface.mapCanvas()
-                center = None
-                if mode == "radius":
-                    if (
-                        self._center is None
-                        or self._center[1] != canvas.mapSettings().destinationCrs()
-                    ):
-                        raise ValueError("Pick the center in the current map CRS")
-                    center = self._center[0]
-                area = capture_area(
-                    mode,
-                    canvas,
-                    [QgsProject.instance().mapLayer(i) for i in ids],
-                    center,
-                    self.radius_input.value(),
-                )
+            area = self.area_panel.selection()
             self.request_controller.start(prompt, area, ids)
             self.setCurrentWidget(self.analysis_tab)
         except (ValueError, OSError, KeyError) as error:
@@ -821,6 +736,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.get_current_limits()
 
     def _account_changed(self, previous, current):
+        self.area_panel.reset()
         self.main_ui.user_email = None
         self.set_account_email(None)
         self._discard_capture()
@@ -840,8 +756,20 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
     def showEvent(self, event):
         super().showEvent(event)
         self._resume_sync()
+        self.area_panel.set_preview_visible(True)
+
+    def suspend_map_interaction(self):
+        self.area_panel.set_preview_visible(False)
+
+    def shutdown_map_interaction(self):
+        self.area_panel.close()
+
+    def hideEvent(self, event):
+        self.suspend_map_interaction()
+        super().hideEvent(event)
 
     def closeEvent(self, event):
+        self.area_panel.set_preview_visible(False)
         self._discard_capture()
         self._restore_map_tool()
         for handle in self._handles:

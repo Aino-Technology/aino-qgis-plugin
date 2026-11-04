@@ -1,7 +1,6 @@
 import json
 import math
 
-from qgis.PyQt.QtCore import QThread
 from qgis.core import (
     QgsApplication,
     QgsCoordinateReferenceSystem,
@@ -12,6 +11,7 @@ from qgis.core import (
     QgsRectangle,
     QgsWkbTypes,
 )
+from qgis.PyQt.QtCore import QThread
 
 WGS84 = "EPSG:4326"
 TRANSFORM_TOLERANCE_DEGREES = 0.000001
@@ -59,6 +59,8 @@ def _transform_polygon(geometry, source_crs, context):
         or not geometry.isGeosValid()
     ):
         raise ValueError("Select valid Polygon or MultiPolygon geometry")
+    if not source_crs.isValid():
+        raise ValueError("Area layer CRS is unknown; assign a valid CRS first")
     transform = QgsCoordinateTransform(
         source_crs, QgsCoordinateReferenceSystem(WGS84), context
     )
@@ -141,7 +143,7 @@ def _split_dateline(geometry, pole=None):
 
 
 def capture_area(
-    mode: str, canvas, selected_layers, center=None, radius_m=None
+    mode: str, canvas, selected_layers, center=None, radius_m=None, *, center_crs=None
 ) -> dict:
     """Capture WGS84 area; radius center is in the canvas destination CRS."""
     require_gui_thread()
@@ -151,6 +153,10 @@ def capture_area(
         if hasattr(settings, "destinationCrs")
         else canvas.destinationCrs()
     )
+    if not crs.isValid():
+        raise ValueError(
+            "Map CRS is unknown; choose a valid CRS before selecting an area"
+        )
     context = settings.transformContext()
     extra = {}
     pole = None
@@ -191,8 +197,11 @@ def capture_area(
             or not all(math.isfinite(v) for v in center)
         ):
             raise ValueError("Select a finite center point on the map")
+        origin_crs = center_crs if center_crs is not None else crs
+        if not origin_crs.isValid():
+            raise ValueError("Point CRS is unknown")
         transform = QgsCoordinateTransform(
-            crs, QgsCoordinateReferenceSystem(WGS84), context
+            origin_crs, QgsCoordinateReferenceSystem(WGS84), context
         )
         origin = transform.transform(QgsPointXY(*center))
         if not (-180 <= origin.x() <= 180 and -90 <= origin.y() <= 90):
@@ -229,3 +238,83 @@ def capture_area(
         "source_crs": source_crs,
         **extra,
     }
+
+
+OSM_URI = "type=xyz&url=https://tile.openstreetmap.org/{z}/{x}/{y}.png&zmin=0&zmax=19"
+OSM_CREDIT = (
+    '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+)
+
+
+def _xyz_identity(uri):
+    from qgis.core import QgsProviderRegistry
+    from qgis.PyQt.QtCore import QUrl
+
+    values = QgsProviderRegistry.instance().decodeUri("wms", uri)
+    url = QUrl(values.get("url", ""))
+    values["url"] = url.toLocalFile() if url.isLocalFile() else url.toString()
+    values.pop("path", None)
+    if values.get("crs") == "EPSG:3857":
+        values.pop("crs")
+    if not values.get("format") or str(values.get("format")) == "NULL":
+        values.pop("format", None)
+    return values
+
+
+def add_osm_basemap(project, canvas, *, uri=OSM_URI):
+    """Add one native XYZ layer and project-owned visible contributor credit."""
+    from qgis.core import (
+        Qgis,
+        QgsAnnotationRectangleTextItem,
+        QgsRasterLayer,
+        QgsTextFormat,
+    )
+    from qgis.PyQt.QtCore import QSizeF
+    from qgis.PyQt.QtGui import QColor
+
+    layer = next(
+        (
+            layer
+            for layer in project.mapLayers().values()
+            if isinstance(layer, QgsRasterLayer)
+            and _xyz_identity(layer.source()) == _xyz_identity(uri)
+        ),
+        None,
+    )
+    if layer is None:
+        layer = QgsRasterLayer(uri, "OpenStreetMap", "wms")
+        if not layer.isValid():
+            raise ValueError(
+                "OpenStreetMap basemap could not be created. From your request remains available."
+            )
+        metadata = layer.metadata()
+        metadata.setRights(
+            ["© OpenStreetMap contributors · https://www.openstreetmap.org/copyright"]
+        )
+        layer.setMetadata(metadata)
+        project.addMapLayer(layer, False)
+        project.layerTreeRoot().addLayer(layer)
+    annotations = project.mainAnnotationLayer()
+    item_id = layer.customProperty("aino/osm_credit", "")
+    if not item_id or annotations.item(item_id) is None:
+        item = QgsAnnotationRectangleTextItem(
+            OSM_CREDIT, QgsRectangle(0.65, 0.94, 0.99, 0.99)
+        )
+        item.setPlacementMode(Qgis.AnnotationPlacementMode.RelativeToMapFrame)
+        item.setFixedSize(QSizeF(64, 8))
+        item.setFixedSizeUnit(Qgis.RenderUnit.Millimeters)
+        format = QgsTextFormat()
+        format.setSize(9)
+        format.setColor(QColor("#20232c"))
+        format.setAllowHtmlFormatting(True)
+        buffer = format.buffer()
+        buffer.setEnabled(True)
+        buffer.setSize(1)
+        buffer.setColor(QColor("white"))
+        format.setBuffer(buffer)
+        item.setFormat(format)
+        item_id = annotations.addItem(item)
+        layer.setCustomProperty("aino/osm_credit", item_id)
+    if canvas is not None:
+        canvas.refresh()
+    return layer

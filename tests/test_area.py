@@ -163,3 +163,21 @@ def test_geodesic_polar_caps(qgis_app, latitude):
 def test_globe_spanning_radius_rejected(qgis_app):
     with pytest.raises(ValueError, match="10,000,000"):
         capture_area("radius", canvas(), [], center=(0, 0), radius_m=10000001)
+
+
+@pytest.mark.parametrize("crs", ["EPSG:4326", "EPSG:3857", "EPSG:32633"])
+def test_radius_wgs84_center_survives_canvas_crs(qgis_app, crs):
+    area = capture_area(
+        "radius",
+        canvas(crs),
+        [],
+        center=(13.4, 52.5),
+        radius_m=1000,
+        center_crs=QgsCoordinateReferenceSystem("EPSG:4326"),
+    )
+    assert area["center"] == pytest.approx([13.4, 52.5])
+
+
+def test_invalid_crs_rejected_before_capture(qgis_app):
+    with pytest.raises(ValueError, match="CRS"):
+        capture_area("extent", canvas("invalid"), [])

@@ -314,12 +314,12 @@ def test_prepare_invalidates_renderer_and_center_changes(
         dialog.input_layers.item(0).setCheckState(Qt.CheckState.Checked)
         if change == "center":
             dialog.area_mode.setCurrentIndex(3)
-            dialog._pick_center()
-            dialog._point_tool.canvasClicked.emit(
+            dialog.area_panel.pick_point()
+            dialog.area_panel.point_tool.canvasClicked.emit(
                 QgsPointXY(500, 500), Qt.MouseButton.LeftButton
             )
-            dialog._pick_center()
-            assert dialog._point_tool is not None
+            dialog.area_panel.pick_point()
+            assert dialog.area_panel.point_tool is not None
         job = dialog.prepare_inputs(str(tmp_path))
         assert job is not None, dialog.capture_status.text()
         if stage == "completed":
@@ -341,11 +341,11 @@ def test_prepare_invalidates_renderer_and_center_changes(
                 )
             )
         else:
-            dialog._point_tool.canvasClicked.emit(
+            dialog.area_panel.point_tool.canvasClicked.emit(
                 QgsPointXY(1500, 1500), Qt.MouseButton.LeftButton
             )
-            assert dialog._center[0] == (1500, 1500)
-            assert dialog._point_tool is None
+            assert dialog.area_panel.selection()["center"][0] > 0.01
+            assert dialog.area_panel.point_tool is None
         assert dialog.prepared_inputs is None
         assert not job.active
         assert not list(tmp_path.iterdir())
