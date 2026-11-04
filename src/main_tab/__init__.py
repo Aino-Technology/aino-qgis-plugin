@@ -1,28 +1,28 @@
 import os
 import tempfile
 
+from qgis.core import QgsProject
 from qgis.PyQt import QtWidgets, uic
 from qgis.PyQt.QtCore import Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt.QtWidgets import QMessageBox
-from qgis.core import QgsProject
 
+from src.analysis.actions import report_text
 from src.analysis.controller import AnalysisController
-from src.analysis.request_controller import RequestController
-from src.analysis.request_capture import RequestCapture
-from src.results.controller import ResultController
-from src.analysis.actions import ActionPanel, report_text
 from src.analysis.polling import TERMINAL
-from src.project_sync.layers import SnapshotCapture
+from src.analysis.request_capture import RequestCapture
+from src.analysis.request_controller import RequestController
 from src.project_sync.controller import SyncController
+from src.project_sync.layers import SnapshotCapture
 from src.project_sync.styles import RenderReference
+from src.results.controller import ResultController
 
+from .analysis_panel import AnalysisPanel
 from .area_panel import AreaPanel
-
 from .helpers import (
-    update_scroll_area,
     analysis_limits_text,
     update_days_label,
+    update_scroll_area,
 )
 
 _QT_POINTING_HAND_CURSOR = getattr(getattr(Qt, "CursorShape", Qt), "PointingHandCursor")
@@ -409,27 +409,15 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             project=QgsProject.instance(),
             parent=self,
         )
-        self.analysis_tab = QtWidgets.QWidget(self)
-        layout = QtWidgets.QVBoxLayout(self.analysis_tab)
-        self.analysis_stage = QtWidgets.QLabel(
-            "Ready — enter your request and press GO.", self
-        )
-        self.analysis_stage.setWordWrap(True)
-        self.analysis_steps = QtWidgets.QLabel(self)
-        self.analysis_steps.setTextFormat(Qt.TextFormat.PlainText)
-        self.analysis_steps.setWordWrap(True)
-        self.analysis_status = QtWidgets.QLabel(self)
-        self.analysis_status.setTextFormat(Qt.TextFormat.PlainText)
-        self.analysis_status.setWordWrap(True)
-        self.analysis_rejection = QtWidgets.QLabel(self)
-        self.analysis_rejection.setTextFormat(Qt.TextFormat.PlainText)
-        self.analysis_rejection.setWordWrap(True)
-        self.analysis_actions = ActionPanel(self)
-        scroll = QtWidgets.QScrollArea(self)
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self.analysis_actions)
-        self.analysis_report = QtWidgets.QTextBrowser(self)
-        self.analysis_report.setMinimumHeight(140)
+        self.analysis_panel = AnalysisPanel(self)
+        self.analysis_tab = self.analysis_panel
+        layout = self.analysis_panel.layout()
+        self.analysis_stage = self.analysis_panel.stage
+        self.analysis_steps = self.analysis_panel.steps
+        self.analysis_status = self.analysis_panel.notice
+        self.analysis_rejection = self.analysis_panel.rejection
+        self.analysis_actions = self.analysis_panel.actions
+        self.analysis_report = self.analysis_panel.report
         self.analysis_resume = QtWidgets.QPushButton(
             "Resume / retry saved request", self
         )
@@ -440,12 +428,6 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.analysis_link.setEnabled(False)
         self.analysis_url = None
         for widget in (
-            self.analysis_stage,
-            self.analysis_status,
-            self.analysis_rejection,
-            self.analysis_steps,
-            scroll,
-            self.analysis_report,
             self.analysis_resume,
             self.results_retry,
             self.analysis_cancel,
@@ -502,9 +484,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             if rejection
             else ""
         )
-        self.analysis_actions.set_action(
-            latest.get("pending_action"), bool(state.get("action_intent"))
-        )
+        self.analysis_panel.set_state(state)
         self.analysis_steps.setText(
             "\n".join(
                 f"{step.get('title', '')}: {step.get('status', '')}"
@@ -533,12 +513,6 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self.analysis_status.clear()
         if latest.get("error"):
             self.analysis_status.setText(str(latest["error"]))
-        if state.get("results") is not None:
-            self._show_report(state["results"].get("report"), latest.get("summary"))
-        elif latest.get("summary"):
-            self.analysis_report.setPlainText("Preview\n" + str(latest["summary"]))
-        else:
-            self.analysis_report.clear()
         self.analysis_url = state.get("project_url")
         url = QUrl(self.analysis_url or "")
         self.analysis_link.setEnabled(
@@ -549,15 +523,17 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self._request_changed(self.request_controller.state)
 
     def _show_report(self, report, summary=None):
-        text = report_text(report)
-        self.analysis_report.setPlainText(
-            text
-            or (
-                "Preview\n" + summary
-                if isinstance(summary, str) and summary
-                else "No narrative was returned. Open the analysis in Aino for available details."
-            )
+        if summary == self.analysis_panel.explanation.text():
+            summary = None
+        text = report_text(report) or (
+            "Preview\n" + summary
+            if isinstance(summary, str) and summary
+            else "No narrative was returned. Open the analysis in Aino for available details."
         )
+        if text == self.analysis_panel.explanation.text():
+            text = ""
+        self.analysis_report.setPlainText(text)
+        self.analysis_report.setVisible(bool(text))
 
     def _analysis_results(self, manifest):
         self._show_report(

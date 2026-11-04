@@ -2,7 +2,7 @@ import math
 import re
 
 from qgis.PyQt import QtWidgets
-from qgis.PyQt.QtCore import QUrl, Qt, pyqtSignal
+from qgis.PyQt.QtCore import QEvent, Qt, QUrl, pyqtSignal
 from qgis.PyQt.QtGui import QDesktopServices
 
 
@@ -69,33 +69,133 @@ def report_text(report):
     return "\n\n".join(sections)
 
 
+class WrappingLabel(QtWidgets.QLabel):
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed
+        )
+
+    def setText(self, text):
+        super().setText(text)
+        self.setVisible(bool(text))
+        self.setMinimumHeight(0)
+        self.setMinimumHeight(max(0, self.heightForWidth(self.width())))
+
+    def resizeEvent(self, event):
+        self.setMinimumHeight(0)
+        self.setMinimumHeight(max(0, self.heightForWidth(event.size().width())))
+        super().resizeEvent(event)
+
+
+class OptionCard(QtWidgets.QFrame):
+    def __init__(self, button, title, description, parent=None):
+        super().__init__(parent)
+        self.button = button
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Minimum
+        )
+        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.addWidget(button, 0, Qt.AlignmentFlag.AlignTop)
+        texts = QtWidgets.QVBoxLayout()
+        for value in (title, description):
+            if value:
+                label = WrappingLabel(value, self)
+                label.setTextFormat(Qt.TextFormat.PlainText)
+                label.setWordWrap(True)
+                label.installEventFilter(self)
+                texts.addWidget(label)
+        layout.addLayout(texts, 1)
+
+    def eventFilter(self, watched, event):
+        if (
+            event.type() == QEvent.Type.MouseButtonRelease
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            self.button.setFocus()
+            self.button.click()
+            return True
+        return super().eventFilter(watched, event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.button.setFocus()
+            self.button.click()
+        super().mouseReleaseEvent(event)
+
+
 class ActionPanel(QtWidgets.QWidget):
     submitted = pyqtSignal(dict)
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setStyleSheet(
+            "QPushButton { background: #111827; color: white; border: 1px solid #111827; border-radius: 6px; padding: 7px; }"
+            "QPushButton:disabled { background: #E5E7EB; color: #667085; border-color: #E5E7EB; }"
+            "QPushButton:focus { border: 2px solid #315EFB; }"
+            "QPlainTextEdit { background: #F7F9FC; color: #111827; border: 1px solid #D8DFEA; padding: 6px; }"
+            "QRadioButton::indicator, QCheckBox::indicator { width: 16px; height: 16px; border: 1px solid #667085; background: white; }"
+            "QRadioButton::indicator { border-radius: 8px; }"
+            "QRadioButton::indicator:checked, QCheckBox::indicator:checked { background: #315EFB; border-color: #315EFB; }"
+            "QRadioButton:focus, QCheckBox:focus { outline: 2px solid #315EFB; }"
+        )
         self.layout = QtWidgets.QVBoxLayout(self)
+        self.layout.setSizeConstraint(QtWidgets.QLayout.SizeConstraint.SetMinimumSize)
+        self.layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.layout.setContentsMargins(0, 0, 0, 0)
         self.pending = None
         self.rows = []
         self.groups = []
         self.blocked = False
         self.error = None
         self.submit_button = None
+        self.deadline = None
 
     def _label(self, text):
-        label = QtWidgets.QLabel(text, self)
+        label = WrappingLabel(text, self)
         label.setTextFormat(Qt.TextFormat.PlainText)
         label.setWordWrap(True)
         self.layout.addWidget(label)
+        label.setVisible(bool(text))
         return label
 
     def set_action(self, pending, busy=False):
-        if self.pending == pending:
+        same_identity = bool(
+            self.pending
+            and pending
+            and self.pending.get("action_id") == pending.get("action_id")
+        )
+        schema_keys = ("kind", "items", "sources", "source_info")
+        if self.pending == pending or (
+            same_identity
+            and all(self.pending.get(key) == pending.get(key) for key in schema_keys)
+        ):
+            self.pending = pending
+            if self.deadline is not None:
+                deadline = pending.get("expires_at") if pending else None
+                self.deadline.setText(
+                    "Server deadline: " + str(deadline) if deadline else ""
+                )
+                self.deadline.setVisible(bool(deadline))
             self.setEnabled(not busy)
             return
+        saved = (
+            {
+                item["id"]: (
+                    [key for key, button in choices if button.isChecked()],
+                    editor.toPlainText() if editor else "",
+                )
+                for item, choices, editor in self.rows
+            }
+            if same_identity
+            else {}
+        )
         while self.layout.count():
             item = self.layout.takeAt(0)
             if item.widget():
+                item.widget().hide()
                 item.widget().deleteLater()
         self.pending = pending
         for group in self.groups:
@@ -105,13 +205,14 @@ class ActionPanel(QtWidgets.QWidget):
         self.blocked = False
         self.submit_button = None
         self.error = None
+        self.deadline = None
         self.setEnabled(not busy)
         if not pending:
             return
-        if isinstance(pending.get("text"), str):
-            self._label(pending["text"])
-        if pending.get("expires_at"):
-            self._label("Server deadline: " + str(pending["expires_at"]))
+        self.deadline = self._label("")
+        deadline = pending.get("expires_at")
+        self.deadline.setText("Server deadline: " + str(deadline) if deadline else "")
+        self.deadline.setVisible(bool(deadline))
         if pending.get("kind") == "confirm_sources":
             self._label(
                 "Confirm all listed sources. Rates are per unit; total usage and final charge are not estimated or locked here."
@@ -160,16 +261,11 @@ class ActionPanel(QtWidgets.QWidget):
                 label_text = _text(option.get("label"))
                 button.setAccessibleName(label_text)
                 group.addButton(button)
-                row = QtWidgets.QWidget(self)
-                row_layout = QtWidgets.QHBoxLayout(row)
-                label = QtWidgets.QLabel(label_text, row)
-                label.setTextFormat(Qt.TextFormat.PlainText)
-                label.setWordWrap(True)
-                row_layout.addWidget(button)
-                row_layout.addWidget(label, 1)
-                self.layout.addWidget(row)
-                if _text(option.get("description")):
-                    self._label(option["description"])
+                self.layout.addWidget(
+                    OptionCard(
+                        button, label_text, _text(option.get("description")), self
+                    )
+                )
                 hint = option.get("action")
                 if hint in {"draw_polygon", "draw_radius", "use_viewport"}:
                     self.blocked = True
@@ -191,6 +287,11 @@ class ActionPanel(QtWidgets.QWidget):
                 text.setPlaceholderText("Your answer or requested changes")
                 text.setMaximumHeight(110)
                 self.layout.addWidget(text)
+            selected, answer = saved.get(item["id"], ([], ""))
+            for key, button in choices:
+                button.setChecked(key in selected)
+            if text:
+                text.setPlainText(answer)
             self.rows.append((item, choices, text))
         self.error = self._label("")
         labels = {
