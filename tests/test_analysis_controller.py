@@ -521,8 +521,8 @@ def test_real_http_poll_auth_pause_and_same_account_resume(
         sip.delete(project)
 
 
-def test_default_go_waits_for_snapshot_and_repeated_ready_never_starts(
-    qgis_app, tmp_path
+def test_default_go_prepares_snapshot_and_repeated_ready_never_restarts(
+    qgis_app, tmp_path, wait_for
 ):
     from types import SimpleNamespace
     from qgis.gui import QgsMapCanvas
@@ -543,29 +543,31 @@ def test_default_go_waits_for_snapshot_and_repeated_ready_never_starts(
         )
     )
     try:
-        dialog.send_osm_request("parks")
-        assert not api.calls
+        dialog.prompt_field.setPlainText("parks")
+        dialog.go_button.click()
+        assert not dialog.go_button.isEnabled()
+        wait_for(lambda: bool(api.calls))
+        assert api.calls[-1][1] == "/integrations/qgis/projects"
+        api.answer(
+            {
+                "project_id": 17,
+                "link_id": str(uuid4()),
+                "project_url": "https://example.invalid/17",
+            }
+        )
         snapshot = {
             "id": str(uuid4()),
             "project_id": 17,
             "state": "ready",
             "layers": [],
         }
-        dialog.sync_controller.state = {
-            "snapshot": snapshot,
-            "binding": {"project_url": "https://example.invalid/17"},
-            "context": {"area": {"kind": "extent"}},
-        }
-        dialog._sync_ready(snapshot)
-        dialog._sync_ready(snapshot)
-        assert not api.calls
-        dialog.prompt_field.setPlainText("parks")
-        dialog.go_button.click()
+        api.answer(snapshot)
         assert api.calls[-1][1] == "/integrations/qgis/analyses"
+        assert api.calls[-1][2]["area"] is None
         original = api.calls[-1][2]
         dialog._sync_ready(snapshot)
         dialog._sync_ready(snapshot)
-        assert len(api.calls) == 1
+        assert len(api.calls) == 3
         task = str(uuid4())
         api.answer(
             {

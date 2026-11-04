@@ -102,7 +102,7 @@ class AnalysisController(QObject):
     def _save(self):
         self.journal.update_sections(self.identity, self.account, analysis=self.state)
 
-    def start(self, project_id, snapshot_id, prompt, area):
+    def start(self, project_id, snapshot_id, prompt, area=None):
         self._scope()
         if not prompt.strip():
             raise ValueError("Enter an analysis request")
@@ -223,7 +223,8 @@ class AnalysisController(QObject):
             self.state.update(task_id=task_id, project_url=data["project_url"])
             self._save()
             self.changed.emit(copy.deepcopy(self.state))
-            self.polling.watch(task_id)
+            if not self.state.get("action_intent"):
+                self.polling.watch(task_id)
 
         self._send(
             "POST", "/integrations/qgis/analyses", self.state["start_intent"], complete

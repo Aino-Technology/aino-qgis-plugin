@@ -9,6 +9,8 @@ from qgis.core import QgsProject, QgsVectorLayer
 from qgis.gui import QgsMapToolEmitPoint
 
 from src.analysis.controller import AnalysisController
+from src.analysis.request_controller import RequestController
+from src.analysis.request_capture import RequestCapture
 from src.results.controller import ResultController
 from src.analysis.actions import ActionPanel, report_text
 from src.analysis.polling import TERMINAL
@@ -52,6 +54,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self._setup_inputs()
         self._setup_sync()
         self._setup_analysis()
+        self._setup_request()
 
         self.go_button.clicked.connect(self.start_osm_thread)
         self.prompt_field.textChanged.connect(self._prompt_changed)
@@ -76,6 +79,8 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self._point_tool = None
         self._previous_map_tool = None
         self.prepared_inputs = None
+        self.area_mode.insertItem(0, "From request")
+        self.area_mode.setCurrentIndex(0)
         self.area_mode.currentIndexChanged.connect(self._area_mode_changed)
         self.radius_input.valueChanged.connect(self._discard_capture)
         self.input_layers.itemChanged.connect(self._discard_capture)
@@ -118,7 +123,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
 
     def _area_mode_changed(self, *args):
         self._discard_capture()
-        radius = self.area_mode.currentIndex() == 2
+        radius = self.area_mode.currentIndex() == 3
         self.center_button.setEnabled(radius)
         self.radius_input.setEnabled(radius)
         self.center_label.setVisible(radius)
@@ -182,7 +187,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.preview_inputs_button.setEnabled(True)
         self.cancel_capture_button.setEnabled(False)
         self.capture_status.setText(
-            "Inputs changed or preparation cancelled. Prepare inputs again."
+            "Select optional vector layers. GO prepares them automatically."
         )
 
     def prepare_inputs(self, directory=None):
@@ -192,7 +197,9 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             project = QgsProject.instance()
             ids = self.selected_input_ids()
             layers = [project.mapLayer(layer_id) for layer_id in ids]
-            mode = ["extent", "polygon", "radius"][self.area_mode.currentIndex()]
+            mode = ["prompt", "extent", "polygon", "radius"][
+                self.area_mode.currentIndex()
+            ]
             center = None
             if mode == "radius":
                 if (
@@ -201,7 +208,13 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                 ):
                     raise ValueError("Pick the center in the current map CRS")
                 center = self._center[0]
-            area = capture_area(mode, canvas, layers, center, self.radius_input.value())
+            area = (
+                {}
+                if mode == "prompt"
+                else capture_area(
+                    mode, canvas, layers, center, self.radius_input.value()
+                )
+            )
             reference = RenderReference(canvas.mapSettings())
             if directory is None:
                 previews = self.sync_controller.journal.directory / "previews"
@@ -318,7 +331,6 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         QgsProject.instance().cleared.connect(self._project_sync_cleared)
         QgsProject.instance().readProject.connect(lambda *args: self._resume_sync())
         self.session.authenticated.connect(self._resume_sync)
-        self._resume_sync()
 
     def _sync_prepared(self):
         if self.prepared_inputs is None:
@@ -334,12 +346,27 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self._sync_failed(str(error))
 
     def _resume_sync(self):
-        if not self.session.account_id:
+        if not self.session.account_id or not hasattr(self, "request_controller"):
             return
         try:
-            self.sync_controller.restore(QgsProject.instance())
-            if hasattr(self, "analysis_controller"):
-                self._resume_analysis()
+            previous = (
+                self.request_controller.identity,
+                self.request_controller.account,
+            )
+            self.request_controller.restore()
+            current = (
+                self.request_controller.identity,
+                self.request_controller.account,
+            )
+            if previous != current:
+                selected = set(self.request_controller.state.get("layer_ids", []))
+                for index in range(self.input_layers.count()):
+                    item = self.input_layers.item(index)
+                    item.setCheckState(
+                        Qt.CheckState.Checked
+                        if item.data(Qt.ItemDataRole.UserRole) in selected
+                        else Qt.CheckState.Unchecked
+                    )
         except (ValueError, OSError) as error:
             self._sync_failed(str(error))
 
@@ -360,6 +387,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             "The next synchronization will create a new Aino link. Existing analysis and recovery records will remain with the previous link.",
         )
         if answer == QMessageBox.StandardButton.Yes:
+            self.request_controller.pause()
             self.sync_controller.detach(QgsProject.instance())
             self.analysis_controller.bind(QgsProject.instance())
             self.project_id = None
@@ -367,7 +395,8 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self.relink_button.hide()
             self.detach_button.hide()
             self._discard_capture()
-            self.sync_status.setText("Detached. Prepare inputs to create a new link.")
+            self.request_controller.restore()
+            self.sync_status.setText("Detached. Press GO to create a new link.")
 
     def _sync_ready(self, snapshot):
         self.project_id = snapshot["project_id"]
@@ -379,6 +408,8 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.snapshot_ready.emit(snapshot)
 
     def _project_sync_cleared(self):
+        if hasattr(self, "request_controller"):
+            self.request_controller.pause()
         self.sync_controller.pause()
         if hasattr(self, "analysis_controller"):
             self.analysis_controller.bind(QgsProject.instance())
@@ -386,10 +417,10 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.project_id = None
         self.project_link_text.clear()
         self.sync_status.clear()
+        self._resume_sync()
 
     def upload_process(self):
         self.setCurrentWidget(self.inputs_tab)
-        self.prepare_inputs()
 
     def _setup_analysis(self):
         self.analysis_controller = AnalysisController(
@@ -407,7 +438,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.analysis_tab = QtWidgets.QWidget(self)
         layout = QtWidgets.QVBoxLayout(self.analysis_tab)
         self.analysis_stage = QtWidgets.QLabel(
-            "Preparation: prepare and sync inputs before GO", self
+            "Ready — enter your request and press GO.", self
         )
         self.analysis_stage.setWordWrap(True)
         self.analysis_steps = QtWidgets.QLabel(self)
@@ -463,13 +494,12 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         )
         self.analysis_cancel.clicked.connect(self._cancel_analysis)
         self.analysis_link.clicked.connect(self._open_analysis)
-        self._resume_analysis()
 
     def _resume_analysis(self):
         if not self.session.account_id:
             return
         try:
-            self.analysis_controller.restore()
+            self.request_controller.retry()
         except (ValueError, OSError) as error:
             self.analysis_status.setText(str(error))
 
@@ -494,9 +524,6 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             if rejection
             else ""
         )
-        self.analysis_resume.setEnabled(
-            bool(state.get("start_intent") or state.get("task_id"))
-        )
         self.analysis_actions.set_action(
             latest.get("pending_action"), bool(state.get("action_intent"))
         )
@@ -507,21 +534,14 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                 if isinstance(step, dict)
             )
         )
-        self.analysis_cancel.setEnabled(
-            bool(state.get("task_id"))
-            and latest.get("status") not in TERMINAL
-            and not state.get("action_intent")
-        )
         active = (
             bool(state.get("start_intent") or state.get("task_id"))
             and latest.get("status") not in TERMINAL
         )
-        self.go_button.setEnabled(not active and not state.get("action_intent"))
-        self.go_button.setText("Working…" if active else "GO")
         self.request_status_label.setText(
             "Analysis: " + latest.get("status", "submitting").replace("_", " ")
             if active or latest.get("status")
-            else "Ready — prepare and sync inputs, then press GO."
+            else "Ready — enter your request and press GO."
         )
         if rejection.get("operation") == "start" and not active:
             self.analysis_stage.setText("Preparation: start rejected")
@@ -530,9 +550,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                 "Analysis: " + latest.get("status", "submitting").replace("_", " ")
             )
         else:
-            self.analysis_stage.setText(
-                "Preparation: prepare and sync inputs before GO"
-            )
+            self.analysis_stage.setText("Ready — enter your request and press GO.")
             self.analysis_report.clear()
             self.analysis_status.clear()
         if latest.get("error"):
@@ -548,6 +566,9 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.analysis_link.setEnabled(
             url.scheme() == "https" and bool(url.host()) and not url.userInfo()
         )
+
+        if hasattr(self, "request_controller"):
+            self._request_changed(self.request_controller.state)
 
     def _show_report(self, report, summary=None):
         text = report_text(report)
@@ -610,7 +631,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             == QMessageBox.StandardButton.Yes
         ):
             try:
-                self.analysis_controller.cancel()
+                self.request_controller.cancel()
             except (ValueError, OSError) as error:
                 self.analysis_status.setText(str(error))
 
@@ -621,7 +642,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
     def _prompt_changed(self):
         if self.go_button.isEnabled():
             self.request_status_label.setText(
-                "Ready — prepare and sync inputs, then press GO."
+                "Ready — enter your request and press GO."
             )
 
     def start_osm_thread(self):
@@ -631,19 +652,89 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             return
         self.send_osm_request(prompt)
 
+    def _setup_request(self):
+        self.request_controller = RequestController(
+            QgsProject.instance(),
+            self.session,
+            self.sync_controller.journal,
+            self.sync_controller,
+            self.analysis_controller,
+            self._capture_request,
+            self,
+        )
+        self.request_controller.changed.connect(self._request_changed)
+        self.request_controller.failed.connect(self.analysis_status.setText)
+        self.preview_inputs_button.hide()
+        self.cancel_capture_button.hide()
+        self.sync_inputs_button.hide()
+        self.resume_sync_button.hide()
+        self._resume_sync()
+
+    def _capture_request(self, area, layer_ids, finished, failed):
+        return RequestCapture(
+            QgsProject.instance(),
+            self.main_ui.iface.mapCanvas(),
+            self.sync_controller.journal.directory / "captures",
+            layer_ids,
+            finished,
+            failed,
+            self.request_controller,
+        )
+
+    def _request_changed(self, state):
+        analysis = self.analysis_controller.state
+        latest = analysis.get("latest") or {}
+        active = self.request_controller.busy or (
+            bool(analysis.get("start_intent") or analysis.get("task_id"))
+            and latest.get("status") not in TERMINAL
+        )
+        self.go_button.setEnabled(not active and not analysis.get("action_intent"))
+        self.go_button.setText("Working…" if active else "GO")
+        self.analysis_cancel.setEnabled(
+            active
+            and not state.get("cancel_requested")
+            and not analysis.get("action_intent")
+        )
+        self.analysis_resume.setEnabled(
+            active or bool(state.get("error")) or self.sync_controller.busy
+        )
+        phase = state.get("phase")
+        message = {
+            "capturing": "Preparing layers",
+            "synchronizing": "Uploading layers",
+            "starting": "Starting analysis",
+            "recapture": "Preparation interrupted. Retry to capture the selected layers again.",
+            "cancelled": "Request cancelled",
+        }.get(phase)
+        if message:
+            self.request_status_label.setText(message)
+            self.analysis_stage.setText(message)
+
     def send_osm_request(self, prompt):
-        state = self.sync_controller.state or {}
-        snapshot = state.get("snapshot") or {}
-        if snapshot.get("state") != "ready":
-            self.setCurrentWidget(self.inputs_tab)
-            self.capture_status.setText(
-                "Prepare and sync the inputs and area, then press GO to start analysis."
-            )
-            return
         try:
-            self.analysis_controller.start(
-                snapshot["project_id"], snapshot["id"], prompt, state["context"]["area"]
-            )
+            ids = self.selected_input_ids()
+            mode = ["prompt", "extent", "polygon", "radius"][
+                self.area_mode.currentIndex()
+            ]
+            area = None
+            if mode != "prompt":
+                canvas = self.main_ui.iface.mapCanvas()
+                center = None
+                if mode == "radius":
+                    if (
+                        self._center is None
+                        or self._center[1] != canvas.mapSettings().destinationCrs()
+                    ):
+                        raise ValueError("Pick the center in the current map CRS")
+                    center = self._center[0]
+                area = capture_area(
+                    mode,
+                    canvas,
+                    [QgsProject.instance().mapLayer(i) for i in ids],
+                    center,
+                    self.radius_input.value(),
+                )
+            self.request_controller.start(prompt, area, ids)
             self.setCurrentWidget(self.analysis_tab)
         except (ValueError, OSError, KeyError) as error:
             self.analysis_status.setText(str(error))
@@ -744,7 +835,6 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self._limit_errors = {}
         self.subscriptions_response = None
         self.prompts_label.clear()
-        self.go_button.setEnabled(True)
         self.upload_button.setEnabled(True)
 
     def showEvent(self, event):
@@ -752,16 +842,11 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self._resume_sync()
 
     def closeEvent(self, event):
-        self.result_controller.pause()
-        self.analysis_controller.pause()
-        self.sync_controller.pause()
         self._discard_capture()
         self._restore_map_tool()
         for handle in self._handles:
             handle.abort()
         self._handles.clear()
-        self.go_button.setEnabled(True)
-        self.upload_button.setEnabled(True)
         super().closeEvent(event)
 
     def setup_account_controls(self):

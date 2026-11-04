@@ -225,7 +225,18 @@ def test_plugin_owned_signout_and_unload_complete_deferred_destruction(
     monkeypatch.setattr(plugin, "run", lambda: reopened.append(True))
     dialog.sign_out()
     assert reopened == [True]
+    plugin.session.set_access_token(token())
+    capture = SimpleNamespace(cancelled=False)
+
+    def cancel_capture():
+        capture.cancelled = True
+
+    capture.cancel = cancel_capture
+    dialog.request_controller.capture = lambda *args: capture
+    dialog.request_controller.start("parks", None, [])
     plugin.unload()
+    assert capture.cancelled
+    assert dialog.request_controller._closed
     assert dialog.analysis_controller._closed
     assert dialog.sync_controller._closed
     assert dialog.result_controller.closed

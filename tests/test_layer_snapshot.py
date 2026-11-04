@@ -313,7 +313,7 @@ def test_prepare_invalidates_renderer_and_center_changes(
     try:
         dialog.input_layers.item(0).setCheckState(Qt.CheckState.Checked)
         if change == "center":
-            dialog.area_mode.setCurrentIndex(2)
+            dialog.area_mode.setCurrentIndex(3)
             dialog._pick_center()
             dialog._point_tool.canvasClicked.emit(
                 QgsPointXY(500, 500), Qt.MouseButton.LeftButton

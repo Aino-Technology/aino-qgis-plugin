@@ -247,7 +247,7 @@ class SyncController(QObject):
         if self._persistence is not None and not self._closed:
             self.notice.emit(self._persistence.notice)
 
-    def prepare(self, project, layers, on_ready, *, context=None):
+    def prepare(self, project, layers, on_ready, *, context=None, project_title=None):
         """Accept completed captures; frozen pending work must be reconciled before new preparation."""
         if (
             self.project is project
@@ -294,7 +294,10 @@ class SyncController(QObject):
                 "request_id": str(uuid4()),
                 "client_project_id": self.client_project_id,
                 "title": (
-                    project.title() or Path(project.fileName()).stem or "QGIS project"
+                    project_title
+                    or project.title()
+                    or Path(project.fileName()).stem
+                    or "QGIS project"
                 )[:500],
             }
         self._save()
@@ -372,6 +375,8 @@ class SyncController(QObject):
             if (
                 generation != self._generation
                 or account_id != self.session.account_id
+                or self.client_project_id
+                != project_identity(self.project, create=False)
                 or self._closed
             ):
                 return
@@ -405,7 +410,12 @@ class SyncController(QObject):
             self.failed.emit(f"Cannot synchronize: {error}")
 
     def _drive(self):
-        if self._closed or not self.state or self.account_id != self.session.account_id:
+        if (
+            self._closed
+            or not self.state
+            or self.account_id != self.session.account_id
+            or self.client_project_id != project_identity(self.project, create=False)
+        ):
             return
         phase = self.state["phase"]
         self.status.emit(
@@ -547,6 +557,8 @@ class SyncController(QObject):
             if (
                 generation != self._generation
                 or account_id != self.session.account_id
+                or self.client_project_id
+                != project_identity(self.project, create=False)
                 or self._closed
             ):
                 return
@@ -564,7 +576,12 @@ class SyncController(QObject):
                 self.failed.emit(str(failure))
 
         def before_request(method, offset, length):
-            if generation != self._generation or account_id != self.session.account_id:
+            if (
+                generation != self._generation
+                or account_id != self.session.account_id
+                or self.client_project_id
+                != project_identity(self.project, create=False)
+            ):
                 raise ValueError("Upload account changed")
             item["transport_intent"] = {
                 "request_id": str(uuid4()),
