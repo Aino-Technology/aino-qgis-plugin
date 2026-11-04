@@ -354,7 +354,15 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         if hasattr(self, "analysis_panel"):
             self.analysis_panel.save_notice.setText(self.sync_notice.text())
             self.analysis_panel.save_notice.setVisible(bool(message))
-            self.analysis_panel.set_diagnostic(message)
+            self.analysis_panel.set_diagnostic(
+                {
+                    "code": "project_link_unsaved"
+                    if message.startswith("Save the QGIS project")
+                    else "project_link_invalid"
+                }
+                if message
+                else {}
+            )
 
     def _sync_failed(self, message):
         self.sync_status.setText(message)
@@ -546,9 +554,9 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                 if manifest["layers"]
                 else None,
             )
-        except (ValueError, OSError) as error:
+        except (ValueError, OSError):
             self.analysis_panel.set_import_state(
-                {"status": "failed", "details": str(error)}
+                {"status": "failed", "diagnostic": {"code": "import_failed"}}
             )
             self.results_retry.setEnabled(True)
 

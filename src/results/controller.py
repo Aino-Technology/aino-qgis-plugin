@@ -215,7 +215,7 @@ class ResultController(QObject):
 
     def _failure(self, message):
         self.pause()
-        self._present("failed", details=message)
+        self._present("failed", diagnostic={"code": "import_failed"})
         self.failed.emit(message)
 
     def _account_changed(self, previous, current):

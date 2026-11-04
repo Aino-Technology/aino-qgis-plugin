@@ -47,7 +47,7 @@ class AnalysisController(QObject):
 
     changed = pyqtSignal(dict)
     status = pyqtSignal(str)
-    diagnostic = pyqtSignal(str)
+    diagnostic = pyqtSignal(dict)
     results_ready = pyqtSignal(dict)
 
     def __init__(self, api, journal=None, project=None, parent=None, scheduler=None):
@@ -67,13 +67,13 @@ class AnalysisController(QObject):
         self.polling.updated.connect(self._updated)
         self.polling.unavailable.connect(
             lambda message: self._notice(
-                "Connection interrupted; polling will retry.", message
+                "Connection interrupted; polling will retry.", "polling_unavailable"
             )
         )
         api.session.account_changed.connect(self._account_changed)
 
-    def _notice(self, message, details=""):
-        self.diagnostic.emit(details)
+    def _notice(self, message, code, http_status=None):
+        self.diagnostic.emit({"code": code, "http_status": http_status})
         self.status.emit(message)
 
     def bind(self, project):
@@ -178,10 +178,11 @@ class AnalysisController(QObject):
                 return
             try:
                 callback(response)
-            except (OSError, ValueError, KeyError, TypeError) as error:
+            except (OSError, ValueError, KeyError, TypeError):
                 self.pause()
                 self._notice(
-                    "Recovery requires attention. Resume to retry.", str(error)
+                    "Recovery requires attention. Resume to retry.",
+                    "recovery_unavailable",
                 )
 
         self._handles.append(self.api.send(method, path, body, complete))
@@ -209,7 +210,8 @@ class AnalysisController(QObject):
         self.changed.emit(copy.deepcopy(self.state))
         self._notice(
             "Submission rejected. Review the current request.",
-            _response_message(response),
+            "submission_rejected",
+            response.status,
         )
 
     def _start(self):
@@ -223,7 +225,8 @@ class AnalysisController(QObject):
             if not response.ok:
                 self._notice(
                     "Start response unavailable. Resume to retry the same request.",
-                    response.message,
+                    "start_response_unavailable",
+                    response.status,
                 )
                 return
             data = response.data
@@ -252,9 +255,12 @@ class AnalysisController(QObject):
         self.state["latest"] = copy.deepcopy(data)
         try:
             self._save()
-        except (ValueError, OSError) as error:
+        except (ValueError, OSError):
             self.pause()
-            self._notice("Cannot save analysis recovery. Resume to retry.", str(error))
+            self._notice(
+                "Cannot save analysis recovery. Resume to retry.",
+                "recovery_save_failed",
+            )
             return
         self.status.emit("")
         self.changed.emit(copy.deepcopy(self.state))
@@ -306,7 +312,8 @@ class AnalysisController(QObject):
             else:
                 self._notice(
                     "Action response unavailable. Resume to retry the saved answer.",
-                    response.message,
+                    "action_response_unavailable",
+                    response.status,
                 )
 
         self._send(
@@ -327,7 +334,9 @@ class AnalysisController(QObject):
         def complete(response):
             if not response.ok:
                 self._notice(
-                    "Results unavailable. Resume to fetch them again.", response.message
+                    "Results unavailable. Resume to fetch them again.",
+                    "results_response_unavailable",
+                    response.status,
                 )
                 return
             data = response.data

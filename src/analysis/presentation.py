@@ -31,6 +31,44 @@ IMPORT_STATUS = {
 }
 
 
+ISSUE_CODES = {
+    "source_unavailable",
+    "search_failed",
+    "not_ready",
+    "sql_timeout",
+    "incomplete_check",
+    "unknown_evidence",
+}
+DIAGNOSTIC_CODES = ISSUE_CODES | {
+    "polling_unavailable",
+    "recovery_unavailable",
+    "submission_rejected",
+    "start_response_unavailable",
+    "action_response_unavailable",
+    "results_response_unavailable",
+    "recovery_save_failed",
+    "import_failed",
+    "request_failed",
+    "project_link_unsaved",
+    "project_link_invalid",
+    "insufficient_credits",
+    "qgis_action_conflict",
+    "qgis_request_validation",
+}
+
+
+def diagnostic_text(value) -> str:
+    if not isinstance(value, dict):
+        return ""
+    code = value.get("code")
+    if not isinstance(code, str) or code not in DIAGNOSTIC_CODES:
+        return ""
+    status = value.get("http_status")
+    return code + (
+        f" (HTTP {status})" if type(status) is int and 100 <= status <= 599 else ""
+    )
+
+
 def present_step(step: dict) -> dict:
     error = step.get("error")
     safe = error if isinstance(error, dict) else {}
@@ -40,7 +78,7 @@ def present_step(step: dict) -> dict:
         "error": safe.get("message", "")
         if isinstance(safe.get("message", ""), str)
         else "",
-        "details": str(safe.get("code") or step.get("status") or ""),
+        "details": diagnostic_text(safe),
     }
 
 
@@ -125,13 +163,17 @@ def present_analysis(state: dict, request_state: dict, import_state: dict) -> di
         "notices": notices,
         "outcome_message": "\n\n".join(summary),
         "details": "\n".join(
-            str(value)
-            for value in [latest.get("status"), latest.get("phase")]
-            + [
-                issue.get("code")
-                for issue in outcome.get("issues", [])
-                if isinstance(issue, dict)
+            value
+            for value in [
+                "Lifecycle: " + LIFECYCLE.get(latest.get("status"), "Updating status"),
+                "Phase: Finding the analysis area"
+                if latest.get("phase") == "resolving_area"
+                else "",
+                diagnostic_text(
+                    {"code": (state.get("last_rejection") or {}).get("error_code")}
+                ),
             ]
+            + [diagnostic_text(issue) for issue in outcome.get("issues", [])]
             if value
         ),
     }

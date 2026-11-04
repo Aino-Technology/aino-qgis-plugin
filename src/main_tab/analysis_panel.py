@@ -2,7 +2,7 @@ from qgis.PyQt import QtWidgets
 from qgis.PyQt.QtCore import Qt
 
 from src.analysis.actions import ActionPanel, WrappingLabel, report_text
-from src.analysis.presentation import present_analysis
+from src.analysis.presentation import diagnostic_text, present_analysis
 
 
 class AnalysisPanel(QtWidgets.QWidget):
@@ -80,7 +80,7 @@ class AnalysisPanel(QtWidgets.QWidget):
         self.report.setVisible(bool(self.report.toPlainText()))
 
     def set_error(self, message):
-        self.set_diagnostic(message)
+        self.set_diagnostic({"code": "request_failed"})
         self.set_notice(
             "Request needs attention. Review the technical details and retry."
         )
@@ -90,7 +90,7 @@ class AnalysisPanel(QtWidgets.QWidget):
         self.notice.setVisible(bool(message))
 
     def set_diagnostic(self, message):
-        self.diagnostic = message
+        self.diagnostic = diagnostic_text(message)
         self._render()
 
     def set_import_state(self, state):
@@ -122,15 +122,9 @@ class AnalysisPanel(QtWidgets.QWidget):
         self.outcome.setVisible(bool(shown["outcome_message"]))
         self.import_notice.setText("\n".join(shown["notices"]))
         self.import_notice.setVisible(bool(shown["notices"]))
-        latest = self.state.get("latest") or {}
-        rejection = self.state.get("last_rejection") or {}
-        details = [
-            shown["details"],
-            self.diagnostic,
-            str(latest.get("error") or ""),
-            str(rejection.get("error_code") or ""),
-        ] + [step["details"] for step in shown["steps"]]
-        if self.import_state.get("details"):
-            details.append(self.import_state["details"])
+        details = [shown["details"], self.diagnostic] + [
+            step["details"] for step in shown["steps"]
+        ]
+        details.append(diagnostic_text(self.import_state.get("diagnostic")))
         self.details.setText("\n".join(details))
         self.details.setVisible(self.details_button.isChecked())
