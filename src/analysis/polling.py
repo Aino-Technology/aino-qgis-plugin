@@ -36,7 +36,8 @@ def valid_state(data, task_id):
     return (
         isinstance(data, dict)
         and data.get("task_id") == task_id
-        and data.get("status") in STATUSES
+        and isinstance(data.get("status"), str)
+        and bool(data["status"].strip())
         and type(data.get("revision")) is int
         and data["revision"] >= 0
         and isinstance(data.get("steps"), list)

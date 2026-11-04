@@ -294,7 +294,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         )
         self.detach_button.clicked.connect(self._detach_sync)
         self.sync_controller.status.connect(self.sync_status.setText)
-        self.sync_controller.notice.connect(self.sync_notice.setText)
+        self.sync_controller.notice.connect(self._sync_notice)
         self.sync_controller.failed.connect(self._sync_failed)
         self.sync_controller.relink_required.connect(self._sync_relink)
         self.sync_controller.ready.connect(self._sync_ready)
@@ -342,6 +342,19 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                     )
         except (ValueError, OSError) as error:
             self._sync_failed(str(error))
+
+    def _sync_notice(self, message):
+        self.sync_notice.setText(
+            "Save the QGIS project to keep its Aino link."
+            if message.startswith("Save the QGIS project")
+            else "The saved Aino link needs attention."
+            if message
+            else ""
+        )
+        if hasattr(self, "analysis_panel"):
+            self.analysis_panel.save_notice.setText(self.sync_notice.text())
+            self.analysis_panel.save_notice.setVisible(bool(message))
+            self.analysis_panel.set_diagnostic(message)
 
     def _sync_failed(self, message):
         self.sync_status.setText(message)
@@ -436,12 +449,13 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             layout.addWidget(widget)
         self.addTab(self.analysis_tab, "Analysis")
         self.analysis_controller.changed.connect(self._analysis_changed)
-        self.analysis_controller.status.connect(self.analysis_status.setText)
+        self.analysis_controller.status.connect(self.analysis_panel.set_notice)
+        self.analysis_controller.diagnostic.connect(self.analysis_panel.set_diagnostic)
         self.analysis_controller.results_ready.connect(self._analysis_results)
         self.analysis_actions.submitted.connect(self._submit_analysis_action)
         self.analysis_resume.clicked.connect(self._resume_analysis)
         self.results_retry.clicked.connect(self._retry_results)
-        self.result_controller.status.connect(self.analysis_stage.setText)
+        self.result_controller.changed.connect(self.analysis_panel.set_import_state)
         self.result_controller.failed.connect(
             lambda message: self.results_retry.setEnabled(True)
         )
@@ -458,61 +472,32 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         try:
             self.request_controller.retry()
         except (ValueError, OSError) as error:
-            self.analysis_status.setText(str(error))
+            self.analysis_panel.set_error(str(error))
 
     def _analysis_changed(self, state):
         if not state or state.get("results") is None:
             self.result_controller.pause()
             self.results_retry.setEnabled(False)
-        latest = state.get("latest") or {}
         self.area_panel.update_analysis(
             self.api_client, state, self.analysis_controller.identity
         )
         rejection = state.get("last_rejection") or {}
         self.analysis_rejection.setText(
             (
-                "Last submission rejected: "
-                + rejection.get("message", "")
-                + (
-                    " Correct the request and press GO."
-                    if rejection.get("operation") == "start"
-                    else " Review the current state."
-                    if latest.get("status") in TERMINAL
-                    else " Review the current state; you can submit a corrected action or cancel."
-                )
+                "Last submission rejected. Not enough credits. "
+                if rejection.get("error_code") == "insufficient_credits"
+                else "Last submission rejected. "
+            )
+            + (
+                "Correct the request and press GO."
+                if rejection.get("operation") == "start"
+                else "Review your answer and retry, or cancel."
             )
             if rejection
             else ""
         )
         self.analysis_panel.set_state(state)
-        self.analysis_steps.setText(
-            "\n".join(
-                f"{step.get('title', '')}: {step.get('status', '')}"
-                for step in latest.get("steps", [])
-                if isinstance(step, dict)
-            )
-        )
-        active = (
-            bool(state.get("start_intent") or state.get("task_id"))
-            and latest.get("status") not in TERMINAL
-        )
-        self.request_status_label.setText(
-            "Analysis: " + latest.get("status", "submitting").replace("_", " ")
-            if active or latest.get("status")
-            else "Ready — enter your request and press GO."
-        )
-        if rejection.get("operation") == "start" and not active:
-            self.analysis_stage.setText("Preparation: start rejected")
-        elif state:
-            self.analysis_stage.setText(
-                "Analysis: " + latest.get("status", "submitting").replace("_", " ")
-            )
-        else:
-            self.analysis_stage.setText("Ready — enter your request and press GO.")
-            self.analysis_report.clear()
-            self.analysis_status.clear()
-        if latest.get("error"):
-            self.analysis_status.setText(str(latest["error"]))
+        self.analysis_rejection.setVisible(bool(rejection))
         self.analysis_url = state.get("project_url")
         url = QUrl(self.analysis_url or "")
         self.analysis_link.setEnabled(
@@ -536,14 +521,10 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.analysis_report.setVisible(bool(text))
 
     def _analysis_results(self, manifest):
+        self.analysis_panel.set_state(self.analysis_controller.state)
         self._show_report(
             manifest.get("report"),
             (self.analysis_controller.state.get("latest") or {}).get("summary"),
-        )
-        self.analysis_stage.setText(
-            "Download: results ready for layer import"
-            if manifest.get("layers")
-            else "Analysis completed — text result"
         )
         self.analysis_results_ready.emit(manifest)
         self._retry_results()
@@ -566,14 +547,16 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
                 else None,
             )
         except (ValueError, OSError) as error:
-            self.analysis_stage.setText("Import interrupted: " + str(error))
+            self.analysis_panel.set_import_state(
+                {"status": "failed", "details": str(error)}
+            )
             self.results_retry.setEnabled(True)
 
     def _submit_analysis_action(self, action):
         try:
             self.analysis_controller.submit_action(action)
         except (ValueError, OSError) as error:
-            self.analysis_status.setText(str(error))
+            self.analysis_panel.set_error(str(error))
 
     def _cancel_analysis(self):
         if (
@@ -587,7 +570,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             try:
                 self.request_controller.cancel()
             except (ValueError, OSError) as error:
-                self.analysis_status.setText(str(error))
+                self.analysis_panel.set_error(str(error))
 
     def _open_analysis(self):
         if self.analysis_link.isEnabled():
@@ -617,12 +600,13 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self,
         )
         self.request_controller.changed.connect(self._request_changed)
-        self.request_controller.failed.connect(self.analysis_status.setText)
+        self.request_controller.failed.connect(self.analysis_panel.set_error)
         self.preview_inputs_button.hide()
         self.cancel_capture_button.hide()
         self.sync_inputs_button.hide()
         self.resume_sync_button.hide()
         self._resume_sync()
+        self._request_changed(self.request_controller.state)
 
     def _capture_request(self, area, layer_ids, finished, failed):
         return RequestCapture(
@@ -652,17 +636,8 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.analysis_resume.setEnabled(
             active or bool(state.get("error")) or self.sync_controller.busy
         )
-        phase = state.get("phase")
-        message = {
-            "capturing": "Preparing layers",
-            "synchronizing": "Uploading layers",
-            "starting": "Starting analysis",
-            "recapture": "Preparation interrupted. Retry to capture the selected layers again.",
-            "cancelled": "Request cancelled",
-        }.get(phase)
-        if message:
-            self.request_status_label.setText(message)
-            self.analysis_stage.setText(message)
+        self.analysis_panel.set_request_state(state)
+        self.request_status_label.setText(self.analysis_panel.stage.text())
 
     def send_osm_request(self, prompt):
         try:
@@ -671,7 +646,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self.request_controller.start(prompt, area, ids)
             self.setCurrentWidget(self.analysis_tab)
         except (ValueError, OSError, KeyError) as error:
-            self.analysis_status.setText(str(error))
+            self.analysis_panel.set_error(str(error))
             self.setCurrentWidget(self.analysis_tab)
 
     def _send(self, method, path, payload, callback):

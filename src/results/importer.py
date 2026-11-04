@@ -5,8 +5,8 @@ import tempfile
 from pathlib import Path
 
 from qgis import utils
-from qgis.PyQt.QtCore import QObject, pyqtSignal
 from qgis.core import QgsEditorWidgetSetup, QgsProject, QgsVectorLayer
+from qgis.PyQt.QtCore import QObject, pyqtSignal
 
 from src.project_sync.area import require_gui_thread
 from src.project_sync.layers import SnapshotCapture, capture_layers
@@ -17,7 +17,6 @@ from src.project_sync.styles import RenderReference, canonical_bytes
 from .storage import build_storage
 from .styles import apply_style
 
-
 IDENTITY_KEYS = (
     "account_id",
     "client_project_id",
@@ -27,6 +26,64 @@ IDENTITY_KEYS = (
     "version",
     "content_hash",
 )
+
+
+PURPOSE_GROUP_KEY = "aino/result-purpose"
+PURPOSE_GROUPS = {
+    "result": "Aino results",
+    "reference": "Aino reference layers",
+    "unverified": "Aino unverified layers",
+}
+
+
+def _purpose(result):
+    value = result.get("purpose")
+    return value if value in PURPOSE_GROUPS else "unverified"
+
+
+def _group(project, purpose):
+    root = project.layerTreeRoot()
+    for group in root.findGroups():
+        if group.customProperty(PURPOSE_GROUP_KEY) == purpose:
+            return group
+    group = root.addGroup(PURPOSE_GROUPS[purpose])
+    group.setCustomProperty(PURPOSE_GROUP_KEY, purpose)
+    return group
+
+
+def _place(project, layer, purpose, legacy=False):
+    root = project.layerTreeRoot()
+    node = root.findLayer(layer.id())
+    if node is None:
+        _group(project, purpose).addLayer(layer)
+        return
+    parent = node.parent()
+    if not (
+        (parent is root and legacy)
+        or parent.customProperty(PURPOSE_GROUP_KEY) in PURPOSE_GROUPS
+    ):
+        return
+    target = _group(project, purpose)
+    if parent is not target:
+        target.addChildNode(node.clone())
+        parent.removeChildNode(node)
+
+
+def _write_provenance(path, provenance):
+    descriptor, temporary = tempfile.mkstemp(prefix=".provenance-", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(canonical_bytes(provenance))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
 
 
 def existing_parts(project, result):
@@ -109,6 +166,7 @@ def _open(project, result, storage, reference):
 def _provenance(result, part, part_ids, baseline):
     provenance = {key: result[key] for key in IDENTITY_KEYS}
     provenance.update(
+        purpose=_purpose(result),
         field_schema=result["field_schema"],
         part_id=part["part_id"],
         part_ids=part_ids,
@@ -208,6 +266,7 @@ def _restore_authoritative_classes(layers, result, baselines, reference):
 def _register(project, staging, layers, found, result, storage, baselines):
     by_id = {baseline["client_layer_id"]: baseline for baseline in baselines}
     part_ids = [part["part_id"] for part in storage]
+    reused_ids = set(found.values())
     for layer, part in layers:
         provenance_path = Path(part["path"]).with_suffix(".provenance.json")
         if provenance_path.exists():
@@ -216,25 +275,31 @@ def _register(project, staging, layers, found, result, storage, baselines):
                 raise ValueError("Persistent output identity changed")
         else:
             provenance = _provenance(result, part, part_ids, by_id[layer.id()])
-            descriptor, temporary = tempfile.mkstemp(
-                prefix=".provenance-", dir=provenance_path.parent
-            )
-            try:
-                with os.fdopen(descriptor, "wb") as stream:
-                    stream.write(canonical_bytes(provenance))
-                    stream.flush()
-                    os.fsync(stream.fileno())
-                os.replace(temporary, provenance_path)
-                directory_fd = os.open(provenance_path.parent, os.O_RDONLY)
-                try:
-                    os.fsync(directory_fd)
-                finally:
-                    os.close(directory_fd)
-            finally:
-                Path(temporary).unlink(missing_ok=True)
+        provenance["purpose"] = _purpose(result)
+        _write_provenance(provenance_path, provenance)
         layer.setCustomProperty(PROVENANCE_KEY, canonical_bytes(provenance).decode())
-        project.addMapLayer(staging.takeMapLayer(layer))
+        project.addMapLayer(staging.takeMapLayer(layer), False)
+        _place(project, layer, _purpose(result))
         found[part["part_id"]] = layer.id()
+    for part in storage:
+        layer = project.mapLayer(found[part["part_id"]])
+        if layer.id() not in reused_ids:
+            continue
+        provenance = json.loads(layer.customProperty(PROVENANCE_KEY))
+        legacy = "purpose" not in provenance
+        provenance["purpose"] = _purpose(result)
+        provenance_path = Path(layer.source().split("|", 1)[0]).with_suffix(
+            ".provenance.json"
+        )
+        if provenance_path.exists():
+            saved = json.loads(provenance_path.read_text())
+            if any(saved.get(key) != result[key] for key in IDENTITY_KEYS):
+                raise ValueError("Persistent output identity changed")
+            if saved.get("purpose") != _purpose(result):
+                saved["purpose"] = _purpose(result)
+                _write_provenance(provenance_path, saved)
+        layer.setCustomProperty(PROVENANCE_KEY, canonical_bytes(provenance).decode())
+        _place(project, layer, _purpose(result), legacy=legacy)
     return [found[part_id] for part_id in part_ids]
 
 

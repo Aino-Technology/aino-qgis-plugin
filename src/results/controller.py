@@ -2,8 +2,8 @@ import copy
 import hashlib
 from pathlib import Path
 
-from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
 from qgis.core import QgsProject
+from qgis.PyQt.QtCore import QObject, QTimer, pyqtSignal
 
 from src.project_sync.managed import watch_managed_output
 from src.project_sync.recovery import RecoveryJournal, project_identity
@@ -15,6 +15,7 @@ from .importer import ImportJob
 
 class ResultController(QObject):
     status = pyqtSignal(str)
+    changed = pyqtSignal(dict)
     completed = pyqtSignal(list)
     failed = pyqtSignal(str)
 
@@ -24,7 +25,6 @@ class ResultController(QObject):
         self.journal = journal or RecoveryJournal()
         self.project = project if project is not None else QgsProject.instance()
         self.downloader = ResultDownloader(api, self)
-        self.downloader.progress.connect(self.status)
         self.generation = 0
         self.active = False
         self.job = None
@@ -97,6 +97,7 @@ class ResultController(QObject):
         self._save()
         self.active = True
         generation = self.generation
+        self._present("downloading", imported_names=[])
         outputs = self.state.get("outputs", [])
         if len(outputs) == len(manifest["layers"]) and all(
             Path(part["path"]).is_file()
@@ -120,6 +121,15 @@ class ResultController(QObject):
                 str(directory),
                 lambda outputs, error: self._downloaded(outputs, error, generation),
             )
+
+    def _present(self, status, **extra):
+        self.presentation = dict(
+            status=status,
+            task_id=self.task_id,
+            imported_names=getattr(self, "presentation", {}).get("imported_names", []),
+        )
+        self.presentation.update(extra)
+        self.changed.emit(copy.deepcopy(self.presentation))
 
     def _valid(self, generation):
         return (
@@ -167,20 +177,11 @@ class ResultController(QObject):
                     for part in output["storage"]
                     for warning in part.get("warnings", [])
                 )
-                self.status.emit(
-                    (
-                        "Results imported. Save the QGIS project to keep these layers."
-                        if self.layer_ids
-                        else "Analysis completed — text result"
-                    )
-                    + ("\n" + "\n".join(warnings) if warnings else "")
-                )
+                self._present("complete", warnings=warnings)
                 self.completed.emit(self.layer_ids)
                 return
             output = self.state["outputs"][self.index]
-            self.status.emit(
-                f"Importing output {self.index + 1} of {len(self.state['outputs'])}"
-            )
+            self._present("importing")
             self.job = ImportJob(
                 self.project,
                 output["result"],
@@ -190,7 +191,11 @@ class ResultController(QObject):
                 valid=lambda: self._valid(generation),
             )
             self.job.finished.connect(lambda ids: self._imported(ids, generation))
-            self.job.failed.connect(self._failure)
+            self.job.failed.connect(
+                lambda message: self._failure(message)
+                if self._valid(generation)
+                else None
+            )
             self.job.start()
         except Exception as error:
             self._failure(str(error))
@@ -199,6 +204,10 @@ class ResultController(QObject):
         if not self._valid(generation):
             return
         self.layer_ids.extend(ids)
+        if ids:
+            self.presentation["imported_names"].append(
+                self.state["outputs"][self.index]["result"]["name"]
+            )
         self.index += 1
         self.job.deleteLater()
         self.job = None
@@ -206,7 +215,7 @@ class ResultController(QObject):
 
     def _failure(self, message):
         self.pause()
-        self.status.emit("Import interrupted. Retry saved results: " + message)
+        self._present("failed", details=message)
         self.failed.emit(message)
 
     def _account_changed(self, previous, current):

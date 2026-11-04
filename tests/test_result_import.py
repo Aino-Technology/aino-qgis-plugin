@@ -157,7 +157,9 @@ def test_all_dimensions_and_actual_geometry_edit(
     qgis_app, tmp_path, dimension, geometry
 ):
     import copy
+
     from qgis.core import QgsGeometry
+
     from src.project_sync.managed import geometry_from_json
 
     geometry = copy.deepcopy(geometry)
@@ -330,6 +332,7 @@ def test_split_output_reuse_and_subset_never_expands(qgis_app, tmp_path):
 
 def test_categorized_recolor_has_proven_mapping(qgis_app, tmp_path):
     from qgis.PyQt.QtGui import QColor
+
     from src.project_sync.controller import _output_references
 
     project = QgsProject()
@@ -484,6 +487,7 @@ def test_controller_layer_add_before_journal_recovery_and_scope(
     client, local_api, wait_for, tmp_path, monkeypatch
 ):
     from qgis.PyQt import sip
+
     from src.project_sync.recovery import RecoveryJournal, project_identity
     from src.results.controller import ResultController
     from tests.test_api_client import token
@@ -557,6 +561,7 @@ def test_controller_layer_add_before_journal_recovery_and_scope(
 
 def test_text_only_and_stale_account_completion(client, local_api, wait_for, tmp_path):
     from qgis.PyQt import sip
+
     from src.project_sync.recovery import RecoveryJournal, project_identity
     from src.results.controller import ResultController
     from tests.test_api_client import token
@@ -677,6 +682,7 @@ def test_graduated_metadata_restores_ranges_and_authority_wins(qgis_app, tmp_pat
         QgsRendererRange,
         QgsVectorLayer,
     )
+
     from tests.test_style_conversion import marker
 
     project = QgsProject()
@@ -730,6 +736,7 @@ def test_duplicate_names_multiple_outputs_are_distinct(
     client, local_api, wait_for, tmp_path
 ):
     from qgis.PyQt import sip
+
     from src.project_sync.recovery import RecoveryJournal, project_identity
     from src.results.controller import ResultController
     from tests.test_api_client import token
@@ -809,6 +816,7 @@ def test_edited_cached_file_reimport_retains_original_baseline(
     qgis_app, tmp_path, wait_for
 ):
     from qgis.core import QgsFeature, QgsGeometry
+
     from src.results.importer import ImportJob
     from src.results.storage import build_storage
 
@@ -881,8 +889,10 @@ def test_close_during_storage_worker_suppresses_delivery(
     import gc
     import threading
     import weakref
+
     from qgis.PyQt import sip
     from qgis.PyQt.QtCore import QTimer
+
     from src.results import download
     from tests.test_api_client import token
 
@@ -1037,8 +1047,10 @@ def test_native_ui_text_only_preserves_report_and_repeats_without_requests(
     qgis_app, tmp_path
 ):
     from types import SimpleNamespace
-    from qgis.PyQt import sip
+
     from qgis.gui import QgsMapCanvas
+    from qgis.PyQt import sip
+
     from src.main_tab import OsmParserDialogMain
     from src.project_sync.recovery import RecoveryJournal
     from src.session import Session
@@ -1072,7 +1084,8 @@ def test_native_ui_text_only_preserves_report_and_repeats_without_requests(
     dialog._analysis_results(manifest)
     dialog._analysis_results(manifest)
     assert dialog.analysis_report.toPlainText() == "Full narrative retained"
-    assert dialog.analysis_stage.text() == "Analysis completed — text result"
+    assert dialog.analysis_stage.text() == "Analysis finished"
+    assert "Completeness unknown" in dialog.analysis_panel.outcome.text()
     assert not dialog.results_retry.isEnabled() and not api.calls
     dialog.result_controller.close()
     controller.close()
@@ -1162,6 +1175,7 @@ def test_download_disk_failure_is_reported(
 
 def test_final_import_scope_check_prevents_layer_add(qgis_app, tmp_path, wait_for):
     from qgis.PyQt import sip
+
     from src.results.importer import ImportJob
     from src.results.storage import build_storage
 
@@ -1218,8 +1232,9 @@ def test_unobserved_empty_string_category_has_proven_mapping(qgis_app, tmp_path)
 
 
 def test_added_attribute_is_captured_as_new_snapshot(qgis_app, tmp_path):
-    from qgis.PyQt.QtCore import QMetaType
     from qgis.core import QgsField
+    from qgis.PyQt.QtCore import QMetaType
+
     from src.project_sync.controller import _output_references
 
     project = QgsProject()
@@ -1271,6 +1286,7 @@ def test_flush_then_close_failure_notifies_once_and_clears_cleanup(
     client, tmp_path, monkeypatch, close_fails, unlink_fails
 ):
     from qgis.PyQt.QtNetwork import QNetworkReply
+
     from src.results.download import ResultDownloader
 
     _, api = client
@@ -1437,8 +1453,9 @@ def test_renamed_missing_codec_explicit_null_keeps_presence(qgis_app, tmp_path):
 
 
 def test_empty_output_added_schema_changes_hash_and_reference(qgis_app, tmp_path):
-    from qgis.PyQt.QtCore import QMetaType
     from qgis.core import QgsField
+    from qgis.PyQt.QtCore import QMetaType
+
     from src.project_sync.controller import _output_references
 
     project = QgsProject()
@@ -1475,8 +1492,8 @@ def test_empty_output_added_schema_changes_hash_and_reference(qgis_app, tmp_path
     "bad_field", ["logical_collision", "duplicate_marker", "mismatched_marker"]
 )
 def test_managed_schema_ambiguity_is_explicit(qgis_app, tmp_path, bad_field):
-    from qgis.PyQt.QtCore import QMetaType
     from qgis.core import QgsField
+    from qgis.PyQt.QtCore import QMetaType
 
     project = QgsProject()
     ids = import_result(
@@ -1513,9 +1530,10 @@ def test_managed_schema_ambiguity_is_explicit(qgis_app, tmp_path, bad_field):
 
 def test_unmarked_legacy_mapping_safe_until_codec_rename(qgis_app, tmp_path, wait_for):
     from osgeo import ogr
+    from qgis.core import QgsField
     from qgis.PyQt import sip
     from qgis.PyQt.QtCore import QMetaType
-    from qgis.core import QgsField
+
     from src.results.importer import ImportJob
     from src.results.storage import build_storage
 
@@ -1562,3 +1580,165 @@ def test_unmarked_legacy_mapping_safe_until_codec_rename(qgis_app, tmp_path, wai
         capture_layers(project, ids, str(tmp_path / "ambiguous"), reference=reference())
     sip.delete(job)
     project.clear()
+
+
+@pytest.mark.parametrize(
+    "purpose,group_name",
+    [
+        ("result", "Aino results"),
+        ("reference", "Aino reference layers"),
+        ("unverified", "Aino unverified layers"),
+        (None, "Aino unverified layers"),
+        ("future", "Aino unverified layers"),
+    ],
+)
+def test_purpose_groups_preserve_identity_and_user_placement(
+    qgis_app, tmp_path, purpose, group_name
+):
+    from src.results.importer import PURPOSE_GROUP_KEY
+
+    project = QgsProject()
+    item = result(**({"purpose": purpose} if purpose else {}))
+    path = write(tmp_path, document(GEOMETRIES[0]))
+    user_group = project.layerTreeRoot().addGroup(group_name)
+    ids = import_result(project, item, path, reference=reference())
+    layer = project.mapLayer(ids[0])
+    root = project.layerTreeRoot()
+    node = root.findLayer(layer.id())
+    assert node.parent().name() == group_name and node.parent() is not user_group
+    assert node.parent().customProperty(PURPOSE_GROUP_KEY) in {
+        "result",
+        "reference",
+        "unverified",
+    }
+    original = json.loads(layer.customProperty(PROVENANCE_KEY))
+    assert original["purpose"] == (
+        purpose if purpose in {"result", "reference"} else "unverified"
+    )
+    layer.setName("My local name")
+    assert layer.startEditing()
+    feature = next(layer.getFeatures())
+    assert layer.changeAttributeValue(
+        feature.id(), logical_index(layer, "Name"), "Local edit"
+    )
+    for target in (user_group, root):
+        node = root.findLayer(layer.id())
+        target.addChildNode(node.clone())
+        node.parent().removeChildNode(node)
+        assert import_result(project, item, path, reference=reference()) == ids
+        assert root.findLayer(layer.id()).parent() is target
+        assert layer.name() == "My local name"
+        assert next(layer.getFeatures())[logical_index(layer, "Name")] == "Local edit"
+        assert json.loads(layer.customProperty(PROVENANCE_KEY)) == original
+    layer.rollBack()
+    project.clear()
+
+
+def test_legacy_root_layer_enriched_once_without_baseline_change(qgis_app, tmp_path):
+    project = QgsProject()
+    item = result()
+    path = write(tmp_path, document(GEOMETRIES[0]))
+    ids = import_result(project, item, path, reference=reference())
+    layer = project.mapLayer(ids[0])
+    provenance = json.loads(layer.customProperty(PROVENANCE_KEY))
+    provenance.pop("purpose")
+    layer.setCustomProperty(PROVENANCE_KEY, json.dumps(provenance))
+    sidecar = Path(layer.source().split("|", 1)[0]).with_suffix(".provenance.json")
+    sidecar.write_text(json.dumps(provenance))
+    root = project.layerTreeRoot()
+    node = root.findLayer(layer.id())
+    root.addChildNode(node.clone())
+    node.parent().removeChildNode(node)
+    assert import_result(project, item, path, reference=reference()) == ids
+    assert root.findLayer(layer.id()).parent().name() == "Aino unverified layers"
+    assert json.loads(layer.customProperty(PROVENANCE_KEY)) == dict(
+        provenance, purpose="unverified"
+    )
+    assert json.loads(sidecar.read_text()) == dict(provenance, purpose="unverified")
+    project.clear()
+
+
+def test_import_retry_presentation_and_stale_job_failure(
+    client, local_api, wait_for, tmp_path, monkeypatch
+):
+    from qgis.PyQt import sip
+
+    from src.project_sync.recovery import RecoveryJournal, project_identity
+    from src.results.controller import ResultController
+    from tests.test_api_client import token
+
+    session, api = client
+    session.set_access_token(token())
+    project = QgsProject()
+    project_identity(project)
+    controller = ResultController(api, RecoveryJournal(tmp_path), project)
+    shown = []
+    controller.changed.connect(shown.append)
+    manifest = dict(task_id=str(uuid4()), layers=[result(purpose="result")])
+    controller.start(manifest, 17, reference())
+    wait_for(lambda: len(local_api.requests) == 1)
+    local_api.respond(0, status=503, data={})
+    wait_for(lambda: shown[-1]["status"] == "failed")
+    controller.start(manifest, 17, reference())
+    wait_for(lambda: len(local_api.requests) == 2)
+    local_api.respond(1, data={"url": local_api.origin + "/result"})
+    wait_for(lambda: len(local_api.requests) == 3)
+    local_api.respond(2, data=document(GEOMETRIES[0]))
+    wait_for(lambda: shown[-1]["status"] == "complete", timeout=10000)
+    assert shown[-1]["imported_names"] == ["Output"]
+    assert all(request["method"] == "GET" for request in local_api.requests)
+    assert all("analyses" not in request["path"] for request in local_api.requests)
+    controller.close()
+    sip.delete(controller)
+    project.clear()
+    sip.delete(project)
+
+
+def test_previous_generation_job_failure_cannot_overwrite_current_import(
+    client, tmp_path, monkeypatch
+):
+    from qgis.PyQt import sip
+
+    from src.project_sync.recovery import RecoveryJournal, project_identity
+    from src.results.controller import ResultController
+    from src.results.importer import ImportJob
+    from src.results.storage import build_storage
+    from tests.test_api_client import token
+
+    session, api = client
+    session.set_access_token(token())
+    project = QgsProject()
+    identity = project_identity(project)
+    controller = ResultController(api, RecoveryJournal(tmp_path), project)
+    item = result()
+    item.update(client_project_id=identity, account_id=session.account_id)
+    path = write(tmp_path, document(GEOMETRIES[0]))
+    storage = build_storage(path, item)
+    callbacks = []
+    monkeypatch.setattr(ImportJob, "start", lambda self: None)
+    monkeypatch.setattr(
+        controller.downloader,
+        "download_results",
+        lambda task, manifest, directory, callback: callbacks.append(callback),
+    )
+    shown = []
+    controller.changed.connect(shown.append)
+    controller.start({"task_id": item["task_id"], "layers": [item]}, 17, reference())
+    callbacks[0]([{"result": item, "storage": storage}], "")
+    stale = controller.job
+    controller.start({"task_id": str(uuid4()), "layers": [item]}, 17, reference())
+    assert controller.active and shown[-1]["status"] == "downloading"
+    before = list(shown)
+    stale.failed.emit("old generation failure")
+    controller.downloader.progress.emit("old generation progress")
+    callbacks[0](None, "old download failure")
+    assert controller.active and shown == before
+    callbacks[1]([{"result": item, "storage": storage}], "")
+    assert controller.active and shown[-1]["status"] == "importing"
+    before = list(shown)
+    stale.failed.emit("old generation failure during new job")
+    assert controller.active and shown == before
+    controller.close()
+    sip.delete(controller)
+    project.clear()
+    sip.delete(project)
