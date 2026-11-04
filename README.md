@@ -5,14 +5,14 @@
 Build an installable archive without installing into any profile:
 
 ```sh
-python3 tools/package_plugin.py /path/to/artifacts/aino-qgis-0.2.0.zip
+python3 tools/package_plugin.py /path/to/artifacts/aino-qgis-0.3.0.zip
 ```
 
 The adjacent `.sha256` records the archive digest. After the backend release has been approved and applied, use QGIS **Plugins → Manage and Install Plugins → Install from ZIP** in the intended profile. The local validation process does not install into a user profile.
 
-Deploy in this order: database migrations 168–170, compatible core and Temporal workers, compatible API gateway, then plugin 0.2.0. Keep the migration history and normal deployment checks for the target environment. The new plugin uses the QGIS integration routes by default, with no feature flag or legacy fallback; existing backend endpoints remain available to other clients. See [release notes](RELEASE_NOTES.md).
+Deploy in this order: database migrations 168–170, compatible core and Temporal workers, compatible API gateway, then plugin 0.3.0. Keep the migration history and normal deployment checks for the target environment. The new plugin uses the QGIS integration routes by default, with no feature flag or legacy fallback; existing backend endpoints remain available to other clients. See [release notes](RELEASE_NOTES.md).
 
-Save the QGIS project explicitly when you want its linked identity and imported layers to survive reopening. Closing the window stops local work and polling; it does not cancel server analysis. Reauthenticate with the same account to resume an interrupted operation. Keep the local operation journal and managed result files together with the project until recovery is no longer needed.
+Save the QGIS project explicitly when you want its linked identity and imported layers to survive reopening. Hiding or closing the dock retains the active operation. Unloading the plugin stops local work and polling; it does not cancel server analysis. Reauthenticate with the same account to resume an interrupted operation. Keep the local operation journal and managed result files together with the project until recovery is no longer needed.
 
 The plugin uses QGIS's bundled `qgis.PyQt` and Qt Network. Sign in with your Aino account. Credentials stay in memory for the current plugin session. When a token expires, sign in again to continue the pending operation. Signing into another account clears the current project association and never replays another account's pending requests.
 
@@ -34,7 +34,7 @@ QT_QPA_PLATFORM=offscreen /path/to/qgis-python -m pytest -q
 
 Create and use `Session` and `ApiClient` on the Qt thread. `Session.account_id` is the token's unverified subject, used only to separate local account state; the server authenticates every request. Listen to `account_changed(previous, current)` to clear account-scoped references. No password, token, project association, or operation journal is persisted by this transport. Credentials are never attached to signed file URLs: absolute URLs and redirects are rejected. File transfers require a separate transport using only the upload/export URL's supplied authorization.
 
-The **Area and layers** tab prepares local analysis inputs. Choose the current map extent, selected polygon features in checked layers, or a point picked on the map with a radius in metres. Check source layers by their QGIS IDs (shown in tooltips); duplicate names remain separate inputs. Preparing inputs exports every feature in the provider/subset/edit-buffer view, regardless of feature selection. Selection determines only the polygon area. Unsupported style details are listed before the prepared-input signal is delivered.
+The **Area and layers** tab selects an optional manual area and explicit vector inputs. Use From your request, capture the current view explicitly, choose a polygon boundary layer, or pick a point with a radius in metres. Boundary selection and input checkboxes are independent. Duplicate layer names remain separate inputs. GO freezes selected inputs and exports every feature in their provider/subset/edit-buffer view; feature selection affects only the polygon boundary. Style simplifications remain visible as separate notices.
 
 Capture APIs (QGIS main thread only):
 
@@ -63,7 +63,7 @@ Categorized/graduated layers use `dataset_type=groups` and a free `aino_class[_N
 
 The local integration fixture renders all six geometry families in native QGIS and the unchanged Aino Default/Groups components using signed MVT from actual PostGIS ingestion. It uses matching 800×600 views, EPSG:3857, center 0/0, zoom 5, and DPR 1. Colors and classifications agree; raster edge coverage differs by up to two pixels. This is a controlled local comparison with the installed frontend dependency versions, not a claim of identical pixels or production dependency parity. See RELEASE_NOTES.md for validation limits.
 
-Synchronization now uses the **Area and layers** tab: prepare the local files, review the listed style simplifications, then click **Sync prepared inputs** (or **Continue with style simplifications and sync**). This second action is intentional: no upload starts while warnings are first being displayed. The old bulk inline upload tab is removed. GO starts the durable analysis lifecycle using the prepared snapshot.
+GO owns capture, link, upload, snapshot readiness and analysis start as one durable request. It works with no input layers and no manual area. An empty snapshot is still bound to the request. Style simplifications are notices; there is no separate prepare/sync/start sequence. The lower-level capture and synchronization APIs below remain available for tests and explicit programmatic callers.
 
 `SyncController(api_client, journal=None, uploader=None, parent=None)` exposes `prepare(project, layers, on_ready, context=None)`, `restore(project)`, `retry_link(project)`, `detach(project)`, `pause()` and `close()`. `ready(dict)` / `on_ready(snapshot)` only deliver a server-ready snapshot with `id` for analysis submission; `failed(str)`, `notice(str)`, `status(str)` and `relink_required(str)` are UI signals. MainTab forwards `snapshot_ready(dict)`. `context` is frozen JSON for the caller; MainTab currently persists the exact captured `area`. The analysis controller binds its prompt/start intent to this frozen context and snapshot. `restore` replays/polls immediately; it delivers readiness through the signal. An unresolved synchronization must be resumed before accepting a new capture. `pause`/close/unload stop local requests only.
 
@@ -83,12 +83,7 @@ QGIS input and result `style` are explicit envelopes `{dataset_type, style, qgis
 
 ### Task 10 analysis lifecycle and Task 11 result handoff
 
-GO now starts the durable multistep analysis API after an acknowledged input snapshot.
-Prepare inputs, review any style warnings, explicitly synchronize, then press GO.
-Snapshot readiness and restored readiness never start a new analysis. The Analysis tab
-shows preparation, server analysis state/steps, and result availability separately;
-it does not estimate progress percentages. Closing the window or unloading pauses
-local requests only. Cancel analysis is an explicit server action with confirmation.
+GO creates one durable request intent, captures optional inputs and starts analysis after its snapshot is ready. Restoring that intent continues the same request; unrelated legacy snapshot readiness never creates a new analysis. The Analysis tab separates preparation, server steps, completeness and import status. Hiding the dock retains the controllers and active operation; unloading pauses local requests only. Cancel analysis is an explicit server action with confirmation.
 
 `AnalysisController(api, journal=None, project=None, parent=None, scheduler=None)` owns
 only the journal's `analysis` section through `update_sections`. Its public entry
@@ -186,10 +181,18 @@ Persistent layers use **native-GDAL-created GeoPackage**, with an explicit primi
 
 The storage decision replaced the initial FlatGeobuf proposal after native tests demonstrated silent row loss when an XY Point was added to a PointZ file and EMPTY geometries were changed into NULL. GeoPackage preserves those cases and all six supported geometry types in XY/XYZ/XYZM. Mixed outputs split by exact geometry type/dimensionality; all parts retain the common dataset name, contiguous import order and stable `part_id`/`part_ids`. Original feature IDs (including explicit null), missing properties, null properties, empty geometries and genuine NULL geometries remain distinct. A managed-layer-only edit-buffer hook persists explicit missing-field→NULL edits as metadata attributes in the same commit; undo/redo/rollback follow the native edit buffer. This hook is attached to restored managed layers and does not modify ordinary inputs.
 
-`import_result(project, result, local_path, reference=...)` returns QGIS layer IDs; its `result` additionally carries account/client-project/server-project/task scope. Without a supplied reference it uses the current QGIS canvas. The synchronous helper is for noninteractive callers. Interactive work uses worker-owned raw parsing/GDAL creation, then a cooperative Qt-thread `ImportJob` for QGIS renderer/capture/provenance operations. Scope changes, project clearing, window close and unload suppress stale callbacks. Storage workers finish independently after cancellation and never operate on project/layer UI objects.
+`import_result(project, result, local_path, reference=...)` returns QGIS layer IDs; its `result` additionally carries account/client-project/server-project/task scope. Without a supplied reference it uses the current QGIS canvas. The synchronous helper is for noninteractive callers. Interactive work uses worker-owned raw parsing/GDAL creation, then a cooperative Qt-thread `ImportJob` for QGIS renderer/capture/provenance operations. Scope changes, project clearing and unload suppress stale callbacks. Storage workers finish independently after cancellation and never operate on project/layer UI objects.
 
 Each imported layer gets `aino/task_id`, `aino/dataset_id`, `aino/version` and full `aino/output_provenance` **before** project insertion. Provenance includes exact server identity/schema/style, `part_id`/`part_ids`, independent local content/style baselines and a proven synthetic-class→server-value `class_mapping` when supported. An atomic `output.provenance.json` preserves the original baseline even if edited backing data is later reimported after removing a layer. Managed recapture restores logical names/types/values, excludes storage fields, reserves original names before adding a synthetic classification field, and never replaces server identity with a local fingerprint. Complete unchanged split selections can reuse one protected `output:<dataset_id>`; partial or edited selections remain local snapshots and never expand to unselected siblings.
 
 Renderer restoration honors the authoritative `dataset_type` envelope. Plain styles and supported categories/ranges restore fill/stroke/opacity/width/point size using the current render reference. Graduated metadata is checked against actual authoritative class values; stale range membership is shown as categories with a warning. Server fallback warnings remain visible. Legacy nonempty flat style envelopes fail clearly. Original source styles are never modified.
 
 Current limits: internal storage metadata/FID fields must remain available. Original unmarked pre-release files remain readable when their field mapping is unambiguous; a renamed unmarked codec is rejected explicitly because its lineage cannot safely be inferred. No automatic migration or schema journal is used. Geometry edits should retain their layer's geometry family. Cross-family provider mutations are not promised lossless. GeoJSON empty coordinate arrays carry no Z/M tags, so no absent dimensional metadata is invented. Storage parses each complete GeoJSON in a worker (memory scales with that output), and permanent raw files/backing files are retained for recovery without automatic eviction. Native validation covers macOS QGIS 4.2.3/Qt6 and 3.44.15/Qt5. The local integration harness exercises explicit process kills at durable gateway, worker, and saved-project boundaries; this does not establish power-loss guarantees or arbitrary provider behavior. Windows and Linux remain unverified.
+
+## Request workspace (0.3.0)
+
+Open the Aino dock, enter a request such as “Parks in Berlin”, and press GO. An empty QGIS project is supported. Vector inputs are optional and must be selected explicitly. From your request resolves the area on the server; ambiguous places appear as questions in the same analysis. Area and layers also provides current view, selected polygons, and point/radius selection with a visible map preview.
+
+The Analysis tab separates progress, questions, result completeness, and import status. Reference and unverified layers use separate Aino groups. Import retry reuses the existing analysis. Save the QGIS project to retain its Aino link and recovery journal.
+
+A `0.3.0-test` archive is built from a committed revision in a separate staging directory, with its API URL set to `https://test-api.aino.world`. The source default remains `https://api.aino.world`. The test archive requires matching deployed core/gateway contracts; local verification does not deploy them.

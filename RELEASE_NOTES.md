@@ -1,3 +1,13 @@
+# Aino QGIS 0.3.0 — request workspace
+
+GO now starts from an empty project, using the request to resolve its area and asking location questions within the same task when needed. Selected vector inputs and manual boundaries are frozen at submission. The persistent dock has request, area/layers, and analysis tabs, native map tools, CRS-aware previews, accessible question forms, readable progress, and independent completeness/import messages.
+
+Results distinguish requested outputs, reference layers, and unverified legacy layers. Recovery retains request/action identities, immutable snapshots, and saved layer imports. The behavior is enabled by default. Compatibility remains QGIS 3.44.15–4.99, with GDAL 3.7+.
+
+The staging-only test ZIP uses `https://test-api.aino.world`; production source defaults remain unchanged. See the accompanying verification report and SHA receipt for exact native runtimes, committed sources, executed local scenarios, and remaining limits. Backend deployment, live paid-provider acceptance, and Windows/Linux acceptance are separate steps.
+
+Local verification: complete native suites passed 423 tests per runtime with two evidence-dependent skips; a final focused run passed 66 tests per runtime, including both completed evidence tests and the capacity-notice regression, with no skips. Real local gateway/RPC/Temporal/PostGIS/native-QGIS scenarios cover empty GO, same-task ambiguity, manual screening, unavailable source plus H3, partial output, capacity guidance and process recovery. Core QGIS-focused tests passed 275, the final pending-ingestion regression file passed 32, and gateway tests passed 115. Full Core collection remains blocked by two unrelated existing imports; this is not a full Core pytest pass.
+
 # Aino QGIS 0.2.0 — local release candidate
 
 The plugin links a QGIS project to an Aino project, uploads immutable file-based vector snapshots, starts durable multistep analysis, presents questions and confirmations, polls compact status, and imports final layers into editable managed GeoPackages. Repeated prompts reuse the project. Changed inputs create new versions; unchanged complete previous outputs can be referenced without reuploading. Text-only results retain their full report.

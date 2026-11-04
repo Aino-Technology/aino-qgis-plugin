@@ -367,3 +367,53 @@ def test_controller_failures_deliver_safe_expanded_details(
     project.clear()
     sip.delete(project)
     sip.delete(session)
+
+
+@pytest.mark.parametrize(
+    "limit", [True, False, 0, -1, float("nan"), float("inf"), 10**400, "1", None]
+)
+def test_capacity_guidance_ignores_invalid_facts(limit):
+    shown = present_analysis(
+        {
+            "latest": {
+                "status": "failed",
+                "error": "private raw message",
+                "failure": {"code": "analysis_area_too_large", "max_area_sq_km": limit},
+            }
+        },
+        {},
+        {},
+    )
+    assert not shown["notices"]
+
+
+def test_capacity_guidance_is_visible_in_native_panel(qgis_app):
+    from qgis.PyQt import sip
+
+    from src.main_tab.analysis_panel import AnalysisPanel
+
+    panel = AnalysisPanel()
+    try:
+        panel.show()
+        panel.set_state(
+            {
+                "latest": {
+                    "status": "failed",
+                    "error": "private raw message",
+                    "failure": {"code": "analysis_area_too_large", "max_area_sq_km": 1},
+                }
+            }
+        )
+        assert "1 km² or less" in panel.import_notice.text()
+        assert "private" not in panel.import_notice.text()
+        panel.set_state(
+            {
+                "latest": {
+                    "status": "cancelled",
+                    "failure": {"code": "analysis_area_too_large", "max_area_sq_km": 1},
+                }
+            }
+        )
+        assert "reduce it" not in panel.import_notice.text()
+    finally:
+        sip.delete(panel)

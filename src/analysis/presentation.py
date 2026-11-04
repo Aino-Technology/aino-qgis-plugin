@@ -1,3 +1,6 @@
+import math
+import sys
+
 LIFECYCLE = {
     "queued": "Waiting to start",
     "planning": "Preparing analysis",
@@ -113,6 +116,18 @@ def present_analysis(state: dict, request_state: dict, import_state: dict) -> di
     else:
         headline = "Ready — enter your request and press GO."
     notices = []
+    failure = latest.get("failure")
+    if latest.get("status") == "failed" and isinstance(failure, dict):
+        limit = failure.get("max_area_sq_km")
+        if (
+            failure.get("code") == "analysis_area_too_large"
+            and type(limit) in {int, float}
+            and 0 < limit <= sys.float_info.max
+            and math.isfinite(limit)
+        ):
+            notices.append(
+                f"Analysis area is too large; reduce it to {limit:g} km² or less."
+            )
     if phase == "recapture":
         notices.append("Retry to capture the selected layers again.")
     import_status = import_state.get("status")

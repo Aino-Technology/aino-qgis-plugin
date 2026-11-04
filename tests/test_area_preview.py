@@ -1,3 +1,5 @@
+from uuid import uuid4
+
 import pytest
 from qgis.core import QgsCoordinateReferenceSystem, QgsProject, QgsRectangle
 from qgis.gui import QgsMapCanvas
@@ -34,6 +36,7 @@ def test_overlay_reprojects_without_changing_project_layers(qgis_app):
 def test_basemap_idempotent_bottom_and_persistent_attribution(qgis_app, tmp_path):
     from qgis.core import QgsRasterLayer, QgsVectorLayer
     from qgis.PyQt.QtGui import QColor, QImage
+
     from src.project_sync.area import add_osm_basemap
 
     project = QgsProject.instance()
@@ -75,6 +78,7 @@ def test_native_xyz_identification_and_http_cache(
     from qgis.core import QgsNetworkAccessManager
     from qgis.PyQt.QtCore import QBuffer, QByteArray, QIODevice, QTimer
     from qgis.PyQt.QtGui import QColor, QImage
+
     from src.project_sync.area import OSM_URI, add_osm_basemap
 
     project = QgsProject.instance()
@@ -108,12 +112,38 @@ def test_native_xyz_identification_and_http_cache(
     timer.timeout.connect(respond)
     timer.start(5)
     try:
-        uri = OSM_URI.replace("https://tile.openstreetmap.org", local_api.origin)
+        uri = OSM_URI.replace(
+            "https://tile.openstreetmap.org", local_api.origin + "/tile-" + uuid4().hex
+        )
         layer = add_osm_basemap(project, canvas, uri=uri)
         canvas.setLayers([layer])
         canvas.show()
         canvas.refresh()
-        wait_for(lambda: bool(responded) and not canvas.isDrawing(), timeout=10000)
+        try:
+            wait_for(lambda: bool(responded) and not canvas.isDrawing(), timeout=10000)
+        except AssertionError:
+            from qgis.core import Qgis
+            from qgis.PyQt.QtCore import QT_VERSION_STR
+
+            pytest.fail(
+                str(
+                    {
+                        "qgis": Qgis.QGIS_VERSION,
+                        "qt": QT_VERSION_STR,
+                        "origin": local_api.origin,
+                        "requests": [request["path"] for request in local_api.requests],
+                        "responded": responded,
+                        "drawing": canvas.isDrawing(),
+                        "render_flag": canvas.renderFlag(),
+                        "frozen": canvas.isFrozen(),
+                        "valid": layer.isValid(),
+                        "sockets": [
+                            (str(sock.state()), sock.errorString())
+                            for sock in local_api.sockets
+                        ],
+                    }
+                )
+            )
         headers = {
             key.lower(): value
             for key, value in local_api.requests[0]["headers"].items()
