@@ -687,6 +687,10 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.request_status_label.setText(self.analysis_panel.stage.text())
 
     def send_osm_request(self, prompt):
+        if not self.session.access_token:
+            self.analysis_panel.set_notice("Sign in, then press GO to send your request.")
+            self.session.require_login()
+            return
         try:
             ids = self.selected_input_ids()
             area = self.area_panel.selection()
@@ -875,16 +879,23 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             "QPushButton:focus { border: 2px solid #315EFB; }"
         )
         self.setCornerWidget(self.account_widget, _QT_TOP_RIGHT_CORNER)
+        self.set_account_email(None)
 
     def set_account_email(self, email):
         """Show the signed-in email and keep the full value available on hover."""
-        account_email = (email or "").strip() or "Signed in"
+        signed_in = bool(self.session.access_token)
+        account_email = (email or "").strip() if signed_in else ""
+        account_email = account_email or ("Signed in" if signed_in else "Not signed in")
+        self.sign_out_button.setText("Sign out" if signed_in else "Sign in")
         display_email = "\u200b".join(account_email) if email else account_email
         self.account_email_label.setText(display_email)
         self.account_email_label.setToolTip(account_email)
         self.account_email_label.setAccessibleName(account_email)
 
     def sign_out(self):
+        if not self.session.access_token:
+            self.main_ui.run()
+            return
         container = getattr(self.main_ui, "dock", None)
         if container is None:
             container = self

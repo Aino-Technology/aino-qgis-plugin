@@ -35,3 +35,5 @@ Rebased on upstream main `174d3c8` (2026-11-03): retains the redesigned login/ma
 
 
 Upstream login-error presentation is retained: styled plain-text Warning/Critical dialogs with OK acknowledgement, shown asynchronously and owned by the login window. Closing login or unloading the plugin closes the popup and pending callbacks; repeated errors reuse one popup. Long server errors remain complete in the selectable Details pane. The former inline-label substitution was corrected after the scoped upstream-preservation review.
+
+A restored dock now displays signed-out state accurately. GO without a session opens the existing login dialog and asks the user to press GO again after authentication; no request is accepted or sent before sign-in.

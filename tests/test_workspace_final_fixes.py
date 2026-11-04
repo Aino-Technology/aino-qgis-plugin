@@ -142,3 +142,28 @@ def test_saved_project_restores_draft_and_ignores_new_removed_layers(
     project.removeMapLayer(selected)
     dialog._restore_draft_inputs()
     assert dialog.selected_input_ids() == []
+
+
+def test_go_without_session_opens_login_without_accepting_request(request_dialog):
+    dialog, _, api = request_dialog
+    dialog.session.clear()
+    prompts = []
+    dialog.session.login_required.connect(lambda: prompts.append(True))
+    dialog.send_osm_request("parks in Berlin")
+    dialog.send_osm_request("parks in Berlin")
+    assert prompts == [True]
+    assert dialog.request_controller.state == {}
+    assert not api.calls
+    assert "Sign in" in dialog.analysis_panel.notice.text()
+    assert dialog.account_email_label.text() == "Not signed in"
+    assert dialog.sign_out_button.text() == "Sign in"
+
+
+def test_signed_out_account_button_uses_existing_login_without_clearing(request_dialog):
+    dialog, _, _ = request_dialog
+    dialog.session.clear()
+    calls = []
+    dialog.main_ui.run = lambda: calls.append(True)
+    dialog.sign_out_button.click()
+    assert calls == [True]
+    assert dialog.account_email_label.text() == "Not signed in"

@@ -128,7 +128,7 @@ def test_sign_out_aborts_old_callbacks_and_keeps_account_journal(
     dialog.sign_out_button.click()
     assert reopened == [True]
     assert session.access_token is None and session.account_id is None
-    assert owner.user_email is None and dialog.account_email_label.text() == "Signed in"
+    assert owner.user_email is None and dialog.account_email_label.text() == "Not signed in"
     assert (
         dialog.sync_controller.state is None and dialog.analysis_controller.state == {}
     )

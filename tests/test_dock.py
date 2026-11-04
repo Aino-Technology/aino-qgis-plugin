@@ -137,6 +137,9 @@ def test_native_dock_hide_returns_main_canvas_tool(client, qgis_app):
     )
     assert dock.scroll.viewport().rect().contains(position)
     assert content.sign_out_button.isVisible()
+    from test_api_client import token
+
+    session.set_access_token(token())
     email = "averylongunbrokensyntheticemailaddresswithmanycharacters@example.invalid"
     content.set_account_email(email)
     qgis_app.processEvents()
