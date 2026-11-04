@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 from qgis.PyQt import sip
-from qgis.PyQt.QtCore import QCoreApplication, QEvent
+from qgis.PyQt.QtCore import QCoreApplication, QEvent, QTimer
 from qgis.PyQt.QtWidgets import QMessageBox
 
 from src.api_client import ApiResponse
@@ -207,6 +207,8 @@ def test_plugin_owned_signout_and_unload_complete_deferred_destruction(
     sys.modules[name] = module
     spec.loader.exec_module(module)
     window = QMainWindow()
+    window.resize(1000, 650)
+    window.show()
     iface = SimpleNamespace(
         mainWindow=lambda: window,
         addDockWidget=window.addDockWidget,
@@ -260,13 +262,44 @@ def test_plugin_owned_signout_and_unload_complete_deferred_destruction(
     assert not restored and len(plugin.actions) == 1
     login = plugin._get_login_dialog()
     assert login.parent() is dock
+    login.open()
     login.close()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    reopened = []
-    monkeypatch.setattr(plugin, "run", lambda: reopened.append(True))
+    login_errors = []
+
+    def complete_real_login():
+        login = plugin._login_dialog
+        try:
+            login.username.setText("reopened@example.invalid")
+            login.password.setText("synthetic-password")
+            login.check_credentials()
+            wait_for(
+                lambda: any(
+                    request["path"] == "/public/auth/login"
+                    for request in local_api.requests
+                )
+            )
+            index = next(
+                index
+                for index, request in enumerate(local_api.requests)
+                if request["path"] == "/public/auth/login"
+            )
+            local_api.respond(index, data={"access_token": token("account-b")})
+        except Exception as error:
+            login_errors.append(error)
+            login.reject()
+
+    QTimer.singleShot(0, complete_real_login)
     dialog.sign_out()
-    assert reopened == [True]
-    plugin.session.set_access_token(token())
+    qgis_app.processEvents()
+    assert not login_errors
+    assert plugin.session.account_id == "account-b"
+    assert plugin.dock is dock and plugin.main_dlg is dialog
+    assert dock.isVisible() and dialog.isVisible() and not dialog.isHidden()
+    dock.hide()
+    plugin.run()
+    qgis_app.processEvents()
+    assert dock.isVisible() and dialog.isVisible() and not dialog.isHidden()
     capture = SimpleNamespace(cancelled=False)
 
     def cancel_capture():

@@ -33,6 +33,16 @@ FORM_CLASS_main, _ = uic.loadUiType(
 )
 
 
+class AccountEmailLabel(QtWidgets.QLabel):
+    def setText(self, text):
+        super().setText(text)
+        self.setMinimumHeight(max(0, self.heightForWidth(self.width())))
+
+    def resizeEvent(self, event):
+        self.setMinimumHeight(max(0, self.heightForWidth(event.size().width())))
+        super().resizeEvent(event)
+
+
 class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
     inputs_prepared = pyqtSignal(dict, list)
     snapshot_ready = pyqtSignal(dict)
@@ -839,7 +849,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         account_layout.setContentsMargins(8, 4, 8, 4)
         account_layout.setSpacing(8)
 
-        self.account_email_label = QtWidgets.QLabel("Signed in")
+        self.account_email_label = AccountEmailLabel("Signed in")
         self.account_email_label.setTextFormat(Qt.TextFormat.PlainText)
         self.account_email_label.setObjectName("account_email_label")
         self.account_email_label.setMaximumWidth(175)
@@ -866,11 +876,16 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
     def set_account_email(self, email):
         """Show the signed-in email and keep the full value available on hover."""
         account_email = (email or "").strip() or "Signed in"
-        self.account_email_label.setText(account_email)
+        display_email = "\u200b".join(account_email) if email else account_email
+        self.account_email_label.setText(display_email)
         self.account_email_label.setToolTip(account_email)
+        self.account_email_label.setAccessibleName(account_email)
 
     def sign_out(self):
-        self.hide()
+        container = getattr(self.main_ui, "dock", None)
+        if container is None:
+            container = self
+        container.hide()
         self.main_ui.user_email = None
         self.session.clear()
         self.set_account_email(None)

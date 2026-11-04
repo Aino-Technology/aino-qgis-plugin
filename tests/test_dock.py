@@ -137,6 +137,16 @@ def test_native_dock_hide_returns_main_canvas_tool(client, qgis_app):
     )
     assert dock.scroll.viewport().rect().contains(position)
     assert content.sign_out_button.isVisible()
+    email = "averylongunbrokensyntheticemailaddresswithmanycharacters@example.invalid"
+    content.set_account_email(email)
+    qgis_app.processEvents()
+    label = content.account_email_label
+    assert label.text().replace("\u200b", "") == email
+    assert label.toolTip() == email
+    assert label.textFormat() == Qt.TextFormat.PlainText
+    assert label.heightForWidth(label.width()) > label.fontMetrics().height()
+    assert label.height() >= label.heightForWidth(label.width())
+    assert content.sign_out_button.geometry().right() < content.account_widget.width()
     previous = QgsMapToolPan(canvas)
     canvas.setMapTool(previous)
     content.area_panel.mode.setCurrentIndex(3)
