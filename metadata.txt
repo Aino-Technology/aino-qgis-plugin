@@ -4,14 +4,14 @@
 
 [general]
 name=Aino
-qgisMinimumVersion=3.25
+qgisMinimumVersion=3.44.15
 qgisMaximumVersion=4.99
-description=AI assistant to download data from OSM
-version=0.1.2
+description=Run multistep spatial analyses with your QGIS layers in Aino
+version=0.3.0
 author=aino.world
 email=hello@aino.world
 
-about=Aino converts natural language prompts such as "parks in Barcelona" into vector layers containing relevant OSM data.<br> If you wish to collaborate, please contact us at hello@aino.world.
+about=Start from a text request in an empty QGIS project, clarify the area, choose optional vector inputs, and track analysis completeness separately from import. Link a QGIS project to Aino, synchronize selected vector layers and an exact analysis area, run multistep spatial analysis, answer questions and import persistent vector results. Supports recovery after interrupted requests and saved-project reopening.
 tracker=https://github.com/Aino-Technology/aino-qgis-plugin/issues
 
 repository=https://github.com/Aino-Technology/aino-qgis-plugin

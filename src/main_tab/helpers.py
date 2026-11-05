@@ -148,54 +148,17 @@ def update_days_label(main_ui, api_response):
             )
 
 
-def update_prompts_left_label(main_ui, api_response):
-    total_amount = None
-    left_amount = None
-    limit_name = "agent_analysis"
-    limits = api_response["limits"]
+def analysis_limits_text(response):
+    fallback = "Aino checks credits and limits on submission."
+    limits = (response or {}).get("limits", [])
+    if not isinstance(limits, list):
+        return fallback
     for limit in limits:
-        if limit["name"] == limit_name:
-            if limit["type"] == "unlimited":
-                main_ui.prompts_label.setText("Unlimited analysis requests")
-                main_ui.prompts_label.setStyleSheet("")
-                return None
-            total_amount = limit["total_amount"]
-            left_amount = limit["left_amount"]
-
-    if total_amount is None or left_amount is None:
-        limit_name = "ai_query"
-        for limit in limits:
-            if limit["name"] == limit_name:
-                if limit["type"] == "unlimited":
-                    main_ui.prompts_label.setText("Unlimited prompts")
-                    main_ui.prompts_label.setStyleSheet("")
-                    return None
-                total_amount = limit["total_amount"]
-                left_amount = limit["left_amount"]
-                break
-
-    if total_amount is not None and left_amount is not None:
-        label = "analyses" if limit_name == "agent_analysis" else "prompts"
-        if left_amount > 0:
-            main_ui.prompts_label.setText(f"{left_amount}/{total_amount} {label}")
-            main_ui.prompts_label.setStyleSheet("")
-
-        else:
-            main_ui.prompts_label.setText(f"{left_amount}/{total_amount} {label}")
-            main_ui.prompts_label.setStyleSheet("color: red;")
-    return left_amount
-
-
-def block_input_area(main_ui, reason):
-    link = "<a href='https://app.aino.world'>app.aino.world</a>"
-    message = None
-    if reason == "subscription":
-        message = f"To get more prompts upgrade your subscription at {link}"
-    elif reason == "prompts":
-        message = "To get more prompts please contact us via hello@aino.world"
-    if message:
-        main_ui.prompt_field.setReadOnly(True)
-        main_ui.prompt_field.clear()
-        main_ui.prompt_field.setHtml(message)
-        main_ui.prompt_field.setStyleSheet("background-color: #F0F0F0; color: #A0A0A0;")
-        toggle_button_state(main_ui.go_button)
+        if not isinstance(limit, dict) or limit.get("name") != "agent_analysis":
+            continue
+        if limit.get("type") == "unlimited":
+            return "Unlimited analysis requests"
+        left, total = limit.get("left_amount"), limit.get("total_amount")
+        if left is not None and total is not None:
+            return f"{left}/{total} analyses — Aino checks credits on submission."
+    return fallback

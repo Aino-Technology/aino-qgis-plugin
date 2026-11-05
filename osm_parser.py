@@ -1,11 +1,14 @@
+from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction
 
 # Initialize Qt resources from file resources.py
 from .resources import *
+# Import the code for the dialog
+# from .osm_parser_dialog import OsmParserDialogStart, OsmParserDialogMain
+
 import os.path
-import pathlib
 import sys
 
 plugin_dir = os.path.dirname(__file__)
@@ -13,15 +16,20 @@ plugin_dir = os.path.dirname(__file__)
 if plugin_dir not in sys.path:
     sys.path.insert(0, plugin_dir)
 
+from src import API_LINK
+from src.api_client import ApiClient
+from src.session import Session
 from src.login.login_tab import LoginDialog
-from src.main_tab import OsmParserDialogMain
+from src.login.signup_tab import SignupDialog
 from src.login import exec_dialog
+from src.main_tab import OsmParserDialogMain
+from src.dock import AinoDockWidget
 
 
 class OsmParser:
     """QGIS Plugin Implementation."""
 
-    def __init__(self, iface):
+    def __init__(self, iface, api_origin=API_LINK):
         """Constructor.
 
         :param iface: An interface instance that will be passed to this class
@@ -31,12 +39,13 @@ class OsmParser:
         """
         # Save reference to the QGIS interface
         self.main_dlg = None
+        self.dock = None
         self.start_dlg = None
         self.iface = iface
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
         # initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
+        locale = (QSettings().value('locale/userLocale') or 'en')[0:2]
         locale_path = os.path.join(
             self.plugin_dir,
             'i18n',
@@ -54,9 +63,82 @@ class OsmParser:
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
         self.first_start = None
-        self.user_logged_in = False
-        self.bearer_token = None
         self.user_email = None
+        self.session = Session()
+        self.api_client = ApiClient(self.session, api_origin)
+        self.session.login_required.connect(self._require_login)
+        self._login_dialog = None
+        self._auth_dialogs = set()
+        self._unloading = False
+
+    @property
+    def unloading(self):
+        return self._unloading
+
+    @property
+    def user_logged_in(self):
+        return bool(self.session.access_token)
+
+    @property
+    def bearer_token(self):
+        return self.session.access_token
+
+    def _own_auth_dialog(self, dialog):
+        self._auth_dialogs.add(dialog)
+        dialog.destroyed.connect(lambda: self._auth_destroyed(dialog))
+        return dialog
+
+    def _auth_destroyed(self, dialog):
+        self._auth_dialogs.discard(dialog)
+        if self._login_dialog is dialog:
+            self._login_dialog = None
+
+    def _auth_parent(self, parent=None):
+        main_window = getattr(self.iface, "mainWindow", lambda: None)
+        for candidate in (parent, self.dock, main_window()):
+            if candidate is not None and not sip.isdeleted(candidate):
+                return candidate
+        return None
+
+    def _get_login_dialog(self, parent=None):
+        if self._login_dialog is not None and sip.isdeleted(self._login_dialog):
+            self._login_dialog = None
+        if self._login_dialog is None:
+            dialog = self._own_auth_dialog(LoginDialog(self, self._auth_parent(parent)))
+            self._login_dialog = dialog
+            dialog.finished.connect(lambda result: self._login_closed(dialog))
+        return self._login_dialog
+
+    def _require_login(self):
+        if self.unloading:
+            return
+        dialog = self._get_login_dialog()
+        dialog.open()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def exec_login(self, parent=None):
+        """Run the plugin-owned login dialog unless unload has started."""
+        if self.unloading:
+            return False
+        return bool(exec_dialog(self._get_login_dialog(parent))) and not self.unloading
+
+    def exec_signup(self, parent=None):
+        """Run a plugin-owned signup dialog without reopening it after unload."""
+        if self.unloading:
+            return False
+        dialog = self._own_auth_dialog(SignupDialog(self, self._auth_parent(parent)))
+        try:
+            return bool(exec_dialog(dialog)) and not self.unloading
+        finally:
+            self._auth_dialogs.discard(dialog)
+            dialog.deleteLater()
+
+    def _login_closed(self, dialog):
+        if self._login_dialog is dialog:
+            self._login_dialog = None
+        self._auth_dialogs.discard(dialog)
+        dialog.deleteLater()
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -162,6 +244,22 @@ class OsmParser:
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
+        if self.unloading:
+            return
+        self._unloading = True
+        if self.main_dlg is not None:
+            self.main_dlg.shutdown()
+        self.api_client.close()
+        for dialog in tuple(self._auth_dialogs):
+            dialog.close()
+        self._auth_dialogs.clear()
+        if self.dock is not None:
+            self.dock.hide()
+            self.iface.removeDockWidget(self.dock)
+            self.dock.deleteLater()
+            self.dock = None
+            self.main_dlg = None
+        self.session.clear()
         for action in self.actions:
             self.iface.removePluginMenu(
                 self.tr(u'&OSM Parser'),
@@ -171,23 +269,36 @@ class OsmParser:
     def run(self):
         """Run method that performs all the real work"""
 
+        if self.unloading:
+            return
+
+        if self.dock is not None and sip.isdeleted(self.dock):
+            self.dock = None
+            self.main_dlg = None
+            self.first_start = True
+
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start:
             self.first_start = False
             self.main_dlg = OsmParserDialogMain(osm_parser=self)
+            self.dock = AinoDockWidget(self.iface, self.main_dlg)
+            self.dock.hide()
+            self.dock.register(self.iface)
 
+        # show the dialog
         if not self.user_logged_in:
-            login_dialog = LoginDialog(self)
-            result = exec_dialog(login_dialog)
+            result = self.exec_login()
+            if self.unloading:
+                return
 
             if result:
-                self.user_logged_in = True
-                self.main_dlg.token = self.bearer_token
-                self.main_dlg.set_account_email(self.user_email)
                 self.main_dlg.update_interface_with_restrictions_start()
-                self.main_dlg.show()
+                self.main_dlg.set_account_email(self.user_email)
+                self.dock.show()
+                self.dock.raise_()
 
         else:
             self.main_dlg.update_interface_with_restrictions_start()
-            self.main_dlg.show()
+            self.dock.show()
+            self.dock.raise_()

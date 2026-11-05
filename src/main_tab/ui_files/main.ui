@@ -40,8 +40,8 @@ QTabBar::tab {
  border-bottom: none;
  border-top-left-radius: 10px;
  border-top-right-radius: 10px;
- padding: 8px 18px;
- min-width: 66px;
+ padding: 8px 10px;
+ min-width: 56px;
 }
 QTabBar::tab:selected {
  background-color: #111827;
@@ -372,7 +372,7 @@ padding: 2px 0;
 </string>
     </property>
     <property name="text">
-     <string>Ready — enter a request to create a layer.</string>
+     <string>Ready — prepare and sync inputs, then press GO.</string>
     </property>
     <property name="wordWrap">
      <bool>true</bool>
@@ -440,6 +440,29 @@ padding: 2px 0;
      <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p&gt;&lt;span style=&quot; color:#595959;&quot;&gt;0/7 days left&lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
     </property>
    </widget>
+  </widget>
+  <widget class="QWidget" name="inputs_tab">
+   <attribute name="title"><string>Area and layers</string></attribute>
+   <layout class="QVBoxLayout" name="inputs_layout">
+    <item><widget class="QLabel" name="area_label"><property name="text"><string>Analysis area</string></property></widget></item>
+    <item><widget class="QComboBox" name="area_mode">
+     <item><property name="text"><string>Current map extent</string></property></item>
+     <item><property name="text"><string>Selected polygon features in checked layers</string></property></item>
+     <item><property name="text"><string>Point on map and radius</string></property></item>
+    </widget></item>
+    <item><layout class="QHBoxLayout" name="radius_layout">
+     <item><widget class="QPushButton" name="center_button"><property name="text"><string>Pick center on map</string></property></widget></item>
+     <item><widget class="QDoubleSpinBox" name="radius_input"><property name="suffix"><string> m</string></property><property name="minimum"><double>0.010000000000000</double></property><property name="maximum"><double>20000000.000000000000000</double></property><property name="value"><double>1000.000000000000000</double></property></widget></item>
+    </layout></item>
+    <item><widget class="QLabel" name="center_label"><property name="text"><string>No center selected</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+    <item><widget class="QLabel" name="inputs_label"><property name="text"><string>Input vector layers (all features, including pending edits)</string></property></widget></item>
+    <item><widget class="QListWidget" name="input_layers"/></item>
+    <item><widget class="QLabel" name="capture_status"><property name="text"><string>Choose the area and layers before analysis.</string></property><property name="wordWrap"><bool>true</bool></property></widget></item>
+    <item><layout class="QHBoxLayout" name="capture_buttons">
+     <item><widget class="QPushButton" name="preview_inputs_button"><property name="text"><string>Prepare inputs</string></property></widget></item>
+     <item><widget class="QPushButton" name="cancel_capture_button"><property name="text"><string>Cancel preparation</string></property><property name="enabled"><bool>false</bool></property></widget></item>
+    </layout></item>
+   </layout>
   </widget>
   <widget class="QWidget" name="upload_tab">
    <attribute name="title">
