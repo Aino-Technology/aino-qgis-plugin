@@ -46,7 +46,7 @@ def _group(project, purpose):
     for group in root.findGroups():
         if group.customProperty(PURPOSE_GROUP_KEY) == purpose:
             return group
-    group = root.addGroup(PURPOSE_GROUPS[purpose])
+    group = root.insertGroup(0, PURPOSE_GROUPS[purpose])
     group.setCustomProperty(PURPOSE_GROUP_KEY, purpose)
     return group
 

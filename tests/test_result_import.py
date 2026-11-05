@@ -1742,3 +1742,22 @@ def test_previous_generation_job_failure_cannot_overwrite_current_import(
     sip.delete(controller)
     project.clear()
     sip.delete(project)
+
+
+@pytest.mark.parametrize("purpose", ["result", "reference", "unverified"])
+def test_new_result_groups_render_above_existing_basemap(qgis_app, tmp_path, purpose):
+    from qgis.core import QgsVectorLayer
+
+    project = QgsProject()
+    basemap = QgsVectorLayer("Polygon?crs=EPSG:4326", "Opaque basemap", "memory")
+    project.addMapLayer(basemap)
+    item = result(purpose=purpose)
+    path = write(tmp_path, document(GEOMETRIES[0]))
+    try:
+        ids = import_result(project, item, path, reference=reference())
+        order = project.layerTreeRoot().layerOrder()
+        assert order.index(project.mapLayer(ids[0])) < order.index(basemap)
+        assert import_result(project, item, path, reference=reference()) == ids
+        assert project.layerTreeRoot().layerOrder() == order
+    finally:
+        project.clear()
