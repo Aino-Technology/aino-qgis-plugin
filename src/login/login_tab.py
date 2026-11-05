@@ -208,6 +208,8 @@ class LoginDialog(QDialog):
         self.expand_username_replacement()
         self._login_email = self.username.text().strip()
         self.process_login.setEnabled(False)
+        self._login_label = self.process_login.text()
+        self.process_login.setText("Signing in…")
         self._request = self.main_ui.api_client.send(
             "POST",
             "/public/auth/login",
@@ -215,7 +217,6 @@ class LoginDialog(QDialog):
             self._login_finished,
         )
         self._handles.append(self._request)
-        self.password.clear()
 
     def _login_finished(self, result):
         if self._closing or getattr(self.main_ui, "unloading", False):
@@ -223,6 +224,7 @@ class LoginDialog(QDialog):
         self._request = None
         self._handles.clear()
         self.process_login.setEnabled(True)
+        self.process_login.setText(self._login_label)
         if result.error == "network_error" or not result.status:
             self.show_login_error(
                 "Unable to connect to Aino. Check your connection and try again.",
