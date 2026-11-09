@@ -24,6 +24,8 @@ def windows_file_io(monkeypatch):
     readonly = set()
 
     def path_open(path, mode="r", *args, **kwargs):
+        if "b" not in mode and kwargs.get("encoding") in (None, "locale"):
+            kwargs["encoding"] = "cp1252"
         stream = original_path_open(path, mode, *args, **kwargs)
         readonly.discard(stream.fileno())
         if not any(flag in mode for flag in "+wax"):
@@ -50,10 +52,14 @@ def windows_file_io(monkeypatch):
 
 def test_windows_journal_save_update_and_replace(tmp_path, windows_file_io):
     journal, identity = RecoveryJournal(tmp_path), str(uuid4())
-    journal.save(identity, "account", {"request": {"phase": "capturing"}})
+    journal.save(
+        identity,
+        "account",
+        {"request": {"phase": "capturing", "prompt": "Парки в Берлине"}},
+    )
     journal.update_sections(identity, "account", sync={"phase": "link"})
     assert journal.load(identity, "account") == {
-        "request": {"phase": "capturing"},
+        "request": {"phase": "capturing", "prompt": "Парки в Берлине"},
         "sync": {"phase": "link"},
     }
     assert not list(tmp_path.rglob(".journal-*"))
@@ -84,7 +90,11 @@ def test_windows_download_storage_worker(qgis_app, tmp_path, windows_file_io):
 def test_windows_import_persists_provenance(qgis_app, tmp_path, windows_file_io):
     project = QgsProject()
     manifest = result()
-    path = write(tmp_path, document(GEOMETRIES[0]))
+    data = document(GEOMETRIES[0])
+    manifest["field_schema"][0]["name"] = "Название"
+    properties = data["features"][0]["properties"]
+    properties["Название"] = properties.pop("Name")
+    path = write(tmp_path, data)
     try:
         ids = import_result(project, manifest, path, reference=reference())
         assert len(ids) == 1 and project.mapLayer(ids[0]).isValid()

@@ -267,7 +267,7 @@ def _register(project, staging, layers, found, result, storage, baselines):
     for layer, part in layers:
         provenance_path = Path(part["path"]).with_suffix(".provenance.json")
         if provenance_path.exists():
-            provenance = json.loads(provenance_path.read_text())
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
             if any(provenance.get(key) != result[key] for key in IDENTITY_KEYS):
                 raise ValueError("Persistent output identity changed")
         else:
@@ -289,7 +289,7 @@ def _register(project, staging, layers, found, result, storage, baselines):
             ".provenance.json"
         )
         if provenance_path.exists():
-            saved = json.loads(provenance_path.read_text())
+            saved = json.loads(provenance_path.read_text(encoding="utf-8"))
             if any(saved.get(key) != result[key] for key in IDENTITY_KEYS):
                 raise ValueError("Persistent output identity changed")
             if saved.get("purpose") != _purpose(result):

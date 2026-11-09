@@ -208,7 +208,7 @@ class RecoveryJournal:
         path = self.scope(client_project_id, account_id) / "journal.json"
         if not path.exists():
             return None
-        document = json.loads(path.read_text())
+        document = json.loads(path.read_text(encoding="utf-8"))
         if (
             document.get("version") != 1
             or document.get("client_project_id") != client_project_id
