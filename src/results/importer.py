@@ -8,6 +8,7 @@ from qgis import utils
 from qgis.core import QgsEditorWidgetSetup, QgsProject, QgsVectorLayer
 from qgis.PyQt.QtCore import QObject, pyqtSignal
 
+from src.filesystem import sync_directory
 from src.project_sync.area import require_gui_thread
 from src.project_sync.layers import SnapshotCapture, capture_layers
 from src.project_sync.managed import MANAGED_KEY, decode, watch_managed_output
@@ -77,11 +78,7 @@ def _write_provenance(path, provenance):
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        sync_directory(path.parent)
     finally:
         Path(temporary).unlink(missing_ok=True)
 

@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from osgeo import gdal, ogr, osr
 
+from src.filesystem import sync_directory
 from src.project_sync.managed import (
     GEOMETRY_TYPES,
     encode,
@@ -196,7 +197,7 @@ def _build_storage(path, result, cancelled):
             raise ValueError("Cannot commit persistent output transaction")
         layer = None
         dataset = None
-        with target.open("rb") as stream:
+        with target.open("r+b") as stream:
             os.fsync(stream.fileno())
         reopened = ogr.Open(str(target))
         stored = reopened.GetLayer(0)
@@ -237,11 +238,7 @@ def _build_storage(path, result, cancelled):
             stream.flush()
             os.fsync(stream.fileno())
         for directory in (root, root.parent):
-            directory_fd = os.open(directory, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            sync_directory(directory)
         outputs.append(
             dict(
                 path=str(target),

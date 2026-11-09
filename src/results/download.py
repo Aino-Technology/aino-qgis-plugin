@@ -7,6 +7,8 @@ from urllib.parse import urlencode
 from qgis.PyQt.QtCore import QObject, QThread, QTimer, QUrl, pyqtSignal, pyqtSlot
 from qgis.PyQt.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
+from src.filesystem import sync_directory
+
 from .storage import build_storage, read_document
 
 
@@ -27,11 +29,7 @@ class _StorageWorker(QThread):
             if self.isInterruptionRequested():
                 return
             os.replace(self.temporary, self.target)
-            directory_fd = os.open(Path(self.target).parent, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            sync_directory(Path(self.target).parent)
             storage = build_storage(
                 self.target, self.result, self.isInterruptionRequested
             )

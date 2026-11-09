@@ -10,6 +10,8 @@ from uuid import UUID, uuid4
 from qgis.PyQt.QtCore import QObject, QStandardPaths, QTimer, pyqtSignal
 from qgis.core import QgsProject
 
+from src.filesystem import sync_directory
+
 
 PROJECT_SCOPE = "aino"
 PROJECT_KEY = "client_project_id"
@@ -197,11 +199,7 @@ class RecoveryJournal:
                 file.flush()
                 os.fsync(file.fileno())
             os.replace(temporary, root / "journal.json")
-            directory_fd = os.open(root, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
+            sync_directory(root)
         finally:
             Path(temporary).unlink(missing_ok=True)
 
@@ -257,9 +255,5 @@ class RecoveryJournal:
                 item[key] = str(target)
             item["size_bytes"] = Path(item["local_path"]).stat().st_size
             adopted.append(item)
-        directory_fd = os.open(root, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        sync_directory(root)
         return adopted
