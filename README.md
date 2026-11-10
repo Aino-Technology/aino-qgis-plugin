@@ -171,6 +171,8 @@ continuing polling never retargets the rejected answer.
 
 ### Persistent analysis results
 
+New downloads live under `aino/recovery/results/<SHA256(account, task, client-projects)>/`. One full hash preserves ownership while keeping raw files, GeoPackages and provenance paths short enough for the reported Windows profile. Existing paths recorded in import journals are reused as-is; no files are moved and saved QGIS projects retain their backing files.
+
 Completed analysis manifests now start download and import automatically. The Analysis tab retains the full report and Aino link while showing download/import progress. **Retry saved result import** reuses the saved manifest; it does not start analysis or submit another paid operation. Text-only results complete without a download or a valid map canvas.
 
 `ResultController(api, journal, project)` owns only the journal `imports` section. `start(manifest, project_id, reference)` scopes work to the signed-in account, current client-project UUID, server project and task; `pause()`/`close()` stop local delivery without cancelling analysis. Repeated result callbacks are intentional and safe. Each task records its manifest fingerprint, permanent storage descriptors and imported layer IDs. Completion is saved after adding layers; recovery also scans `aino/output_provenance` properties, so a crash after layer addition does not add duplicates. Existing local edits and styles stay intact. New versions of an already imported dataset receive a separate `(vN)` layer. Saving the QGIS project remains an explicit user action.

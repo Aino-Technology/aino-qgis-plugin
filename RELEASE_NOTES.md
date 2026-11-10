@@ -2,6 +2,8 @@
 
 ## Windows persistence fix (unreleased)
 
+New result downloads use a flat, full SHA-256 namespace for account/project/task ownership instead of nesting several long identity directories. This keeps download, GeoPackage and provenance paths below the normal Windows path limit for the reported profile. Saved result paths remain readable and are reused without migration; interrupted imports can be retried from their saved manifest without running analysis again.
+
 Journal writes, captured-input adoption and result persistence no longer try to open directories through the Windows CRT. File flushes and atomic journal/provenance replacement remain in place; POSIX directory flush errors still propagate. GeoPackage flushing now uses a writable handle, as required by Windows. Recovery and provenance JSON are read explicitly as UTF-8 so non-ASCII requests and field names survive Windows system encodings.
 
 GO now starts from an empty project, using the request to resolve its area and asking location questions within the same task when needed. Selected vector inputs and manual boundaries are frozen at submission. The persistent dock has request, area/layers, and analysis tabs, native map tools, CRS-aware previews, accessible question forms, readable progress, and independent completeness/import messages.

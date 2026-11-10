@@ -8,6 +8,7 @@ from qgis.PyQt.QtCore import QObject, QThread, QTimer, QUrl, pyqtSignal, pyqtSlo
 from qgis.PyQt.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
 from src.filesystem import sync_directory
+from src.project_sync.styles import canonical_bytes
 
 from .storage import build_storage, read_document
 
@@ -68,7 +69,14 @@ class ResultDownloader(QObject):
         self.layers = list(manifest["layers"])
         self.index = 0
         self.outputs = []
-        self.directory = Path(target_dir) / hashlib.sha256(task_id.encode()).hexdigest()
+        scope = [
+            self.account,
+            task_id,
+            sorted({layer.get("client_project_id", "") for layer in self.layers}),
+        ]
+        self.directory = (
+            Path(target_dir) / hashlib.sha256(canonical_bytes(scope)).hexdigest()
+        )
         self.directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._next()
         return self

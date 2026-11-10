@@ -114,7 +114,7 @@ class ResultController(QObject):
                     project_id=project_id,
                     task_id=self.task_id,
                 )
-            directory = self.journal.scope(identity, account) / "results"
+            directory = self.journal.directory / "results"
             self.downloader.download_results(
                 self.task_id,
                 scoped,
