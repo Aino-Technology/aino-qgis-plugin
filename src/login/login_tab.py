@@ -1,6 +1,5 @@
 import os
 import plistlib
-import subprocess
 import sys
 
 from qgis.PyQt import uic
@@ -31,6 +30,7 @@ class LoginDialog(QDialog):
         self.main_ui = main_ui
         self._request = None
         self._login_email = None
+        self._login_label = self.process_login.text()
         self._error_dialog = None
         self._closing = False
         self.finished.connect(self._cleanup)
@@ -49,13 +49,12 @@ class LoginDialog(QDialog):
             return {}
 
         try:
-            result = subprocess.run(
-                ["defaults", "export", "NSGlobalDomain", "-"],
-                check=True,
-                capture_output=True,
+            filename = os.path.expanduser(
+                "~/Library/Preferences/.GlobalPreferences.plist"
             )
-            preferences = plistlib.loads(result.stdout)
-        except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+            with open(filename, "rb") as preferences_file:
+                preferences = plistlib.load(preferences_file)
+        except (OSError, ValueError, TypeError):
             return {}
         if not isinstance(preferences, dict):
             return {}

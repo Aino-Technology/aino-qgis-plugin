@@ -2,12 +2,17 @@ import hashlib
 import json
 import os
 import tempfile
-import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from qgis.PyQt.QtCore import QObject, QStandardPaths, QTimer, pyqtSignal
+from qgis.PyQt.QtCore import (
+    QObject,
+    QStandardPaths,
+    QTimer,
+    QXmlStreamReader,
+    pyqtSignal,
+)
 from qgis.core import QgsProject
 
 from src.filesystem import sync_directory
@@ -26,16 +31,49 @@ def _current_identity(project):
 
 
 def _xml_identity(stream):
-    path = []
-    for event, element in ET.iterparse(stream, events=("start", "end")):
-        if event == "start":
-            path.append(element.get("name", element.tag))
-        else:
-            if path == ["qgis", "properties", PROJECT_SCOPE, PROJECT_KEY]:
-                return str(UUID(element.text or ""))
-            path.pop()
-            element.clear()
-    return None
+    reader = QXmlStreamReader()
+    reader.setEntityExpansionLimit(1)
+    target = ["qgis", "properties", PROJECT_SCOPE, PROJECT_KEY]
+    path, text = [], []
+    identity = None
+    for chunk in iter(lambda: stream.read(16384), b""):
+        reader.addData(chunk)
+        while not reader.atEnd():
+            reader.readNext()
+            if reader.isDTD() and (
+                "<!ENTITY" in str(reader.text()) or reader.entityDeclarations()
+            ):
+                raise ValueError(
+                    "Entity declarations are not allowed in project metadata"
+                )
+            if reader.isEntityReference():
+                raise ValueError(
+                    "Entity references are not allowed in project metadata"
+                )
+            if reader.isStartElement():
+                attributes = reader.attributes()
+                name = (
+                    attributes.value("name")
+                    if attributes.hasAttribute("name")
+                    else reader.qualifiedName()
+                )
+                path.append(str(name))
+                if path == target:
+                    text = []
+            elif reader.isCharacters() and path == target:
+                text.append(str(reader.text()))
+            elif reader.isEndElement():
+                if path == target:
+                    identity = str(UUID("".join(text)))
+                path.pop()
+        if (
+            reader.hasError()
+            and reader.error() != QXmlStreamReader.Error.PrematureEndOfDocumentError
+        ):
+            raise ValueError(reader.errorString())
+    if reader.hasError() or not reader.isEndDocument():
+        raise ValueError("Invalid project XML")
+    return identity
 
 
 def _stored_identity(project):
@@ -58,7 +96,7 @@ def _stored_identity(project):
         if path.suffix.lower() == ".qgs":
             with path.open("rb") as stream:
                 return _xml_identity(stream)
-    except (OSError, ValueError, RuntimeError, ET.ParseError, zipfile.BadZipFile):
+    except (OSError, ValueError, RuntimeError, zipfile.BadZipFile):
         return None
     return None
 

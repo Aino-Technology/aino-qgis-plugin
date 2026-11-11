@@ -325,7 +325,7 @@ def test_cancelled_login_can_be_requested_again_without_losing_operation(
     dialog.deleteLater()
 
 
-def test_destroyed_login_aborts_request_and_clears_password(
+def test_closed_login_aborts_request_and_clears_password(
     client, local_api, wait_for, qgis_app
 ):
     from qgis.PyQt.QtCore import QCoreApplication, QEvent
@@ -337,6 +337,8 @@ def test_destroyed_login_aborts_request_and_clears_password(
     dialog.password.setText("ephemeral-password")
     dialog.check_credentials()
     wait_for(lambda: len(local_api.requests) == 1)
+    assert dialog.password.text() == "ephemeral-password"
+    dialog.close()
     assert not dialog.password.text()
     dialog.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
