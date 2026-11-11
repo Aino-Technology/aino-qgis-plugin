@@ -12,8 +12,6 @@ FILES = (
     "metadata.txt",
     "icon.svg",
     "Welcome.svg",
-    "README.md",
-    "RELEASE_NOTES.md",
     "LICENSE",
 )
 EXTENSIONS = {".py", ".ui", ".svg", ".png", ".qss"}
@@ -33,7 +31,7 @@ def build(destination):
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(files):
             relative = path.relative_to(ROOT)
-            archive.write(path, f"osm_parser/{relative.as_posix()}")
+            archive.write(path, f"aino-qgis-plugin-main/{relative.as_posix()}")
     digest = hashlib.sha256(destination.read_bytes()).hexdigest()
     destination.with_suffix(destination.suffix + ".sha256").write_text(
         f"{digest}  {destination.name}\n"
