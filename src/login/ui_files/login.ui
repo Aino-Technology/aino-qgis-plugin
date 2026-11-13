@@ -222,6 +222,9 @@ padding: 9px;
    <property name="styleSheet">
     <string notr="true">color: black</string>
    </property>
+   <property name="openExternalLinks">
+    <bool>true</bool>
+   </property>
    <property name="text">
     <string>&lt;html&gt;&lt;head/&gt;&lt;body&gt;&lt;p align=&quot;center&quot;&gt;&lt;a href=&quot;https://aino.world/&quot;&gt;&lt;span style=&quot; font-size:13pt; text-decoration: underline; color:#4580fe;&quot;&gt;aino.world&lt;/span&gt;&lt;/a&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</string>
    </property>

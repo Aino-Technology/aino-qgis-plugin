@@ -5,6 +5,8 @@ from qgis.PyQt import QtWidgets
 
 import webbrowser
 
+from src import SIGNUP_URL
+
 # This loads your .ui file so that PyQt can populate your plugin with the elements from Qt Designer
 FORM_CLASS_start, _ = uic.loadUiType(
     os.path.join(os.path.dirname(__file__), "./ui_files/start.ui")
@@ -44,8 +46,7 @@ class OsmParserDialogStart(QtWidgets.QDialog, FORM_CLASS_start):
         if self.main_ui.unloading:
             return
         self.hide()
-        auth_url = "https://app.aino.world/auth"
-        webbrowser.open(auth_url, new=0, autoraise=True)
+        webbrowser.open(SIGNUP_URL, new=0, autoraise=True)
         if self.main_ui.exec_signup(self):
             self.accept()
         elif not self.main_ui.unloading:
