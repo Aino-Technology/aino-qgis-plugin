@@ -18,11 +18,13 @@ from src.project_sync.controller import SyncController
 from src.project_sync.layers import SnapshotCapture
 from src.project_sync.styles import RenderReference
 from src.results.controller import ResultController
+from src import ADD_CREDITS_URL
 
-from .analysis_panel import AnalysisPanel
+from .analysis_panel import CREDITS_PAUSE_ERROR, AnalysisPanel
 from .area_panel import AreaPanel, ManualAreaRequired
 from .helpers import (
     analysis_limits_text,
+    credits_left,
     update_days_label,
     update_scroll_area,
 )
@@ -75,6 +77,7 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.currentChanged.connect(lambda _: update_scroll_area(self))
         self.limits_response = None
         self._limit_errors = {}
+        self._awaiting_credits = False
         self.subscriptions_response = None
         self.trial_label.setVisible(False)
         self.trial_label.setText("Trial subscription")
@@ -102,11 +105,16 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             )
         self.prompt_field.setMinimumHeight(140)
         self.go_button.setMinimumHeight(42)
+        self.request_add_credits = QtWidgets.QPushButton("Add credits", self.main_tab)
+        self.request_add_credits.setToolTip("Opens Aino in your browser")
+        self.request_add_credits.setVisible(False)
+        self.request_add_credits.clicked.connect(self._open_add_credits)
         for widget in (
             self.label,
             self.label_3,
             self.trial_label,
             self.prompts_label,
+            self.request_add_credits,
             self.prompt_field,
             self.go_button,
             self.request_status_label,
@@ -505,6 +513,24 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.result_controller.completed.connect(self.area_panel.results_imported)
         self.analysis_cancel.clicked.connect(self._cancel_analysis)
         self.analysis_link.clicked.connect(self._open_analysis)
+        self.analysis_panel.add_credits.clicked.connect(self._open_add_credits)
+        app = QtWidgets.QApplication.instance()
+        if app is not None:
+            app.applicationStateChanged.connect(self._application_state_changed)
+
+    def _open_add_credits(self):
+        # Credits are bought in the browser; the balance is re-read when QGIS is active again.
+        self._awaiting_credits = True
+        QDesktopServices.openUrl(QUrl(ADD_CREDITS_URL))
+
+    def _application_state_changed(self, state):
+        if (
+            self._awaiting_credits
+            and state == Qt.ApplicationState.ApplicationActive
+            and self.session.account_id
+            and not self._shutdown
+        ):
+            self.get_current_limits()
 
     def _resume_analysis(self):
         if not self.session.account_id:
@@ -522,22 +548,22 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self.api_client, state, self.analysis_controller.identity
         )
         rejection = state.get("last_rejection") or {}
-        self.analysis_rejection.setText(
-            (
-                "Last submission rejected. Not enough credits. "
-                if rejection.get("error_code") == "insufficient_credits"
-                else "Last submission rejected. "
-            )
-            + (
+        out_of_credits = rejection.get("error_code") == "insufficient_credits"
+        if out_of_credits:
+            text = "Not enough credits. Add credits, then submit your answer again."
+        elif rejection:
+            text = "Last submission rejected. " + (
                 "Correct the request and press GO."
                 if rejection.get("operation") == "start"
                 else "Review your answer and retry, or cancel."
             )
-            if rejection
-            else ""
-        )
+        else:
+            text = ""
+        self.analysis_rejection.setText(text)
         self.analysis_panel.set_state(state)
         self.analysis_rejection.setVisible(bool(rejection))
+        paused = ((state.get("latest") or {}).get("error")) == CREDITS_PAUSE_ERROR
+        self.analysis_panel.add_credits.setVisible(out_of_credits or paused)
         self.analysis_url = state.get("project_url")
         url = QUrl(self.analysis_url or "")
         self.analysis_link.setEnabled(
@@ -773,6 +799,17 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
             self.prompts_label.setText(analysis_limits_text(self.limits_response))
             self.prompts_label.setStyleSheet("")
             self.prompts_label.setToolTip("")
+        left = credits_left(self.limits_response)
+        # Some accounts start with no credits at all, so say so before the first GO rather
+        # than after a request stops.
+        empty = left is not None and left <= 0
+        if empty:
+            self.prompts_label.setText(
+                "Your account has no credits. Add credits to run requests."
+            )
+        else:
+            self._awaiting_credits = False
+        self.request_add_credits.setVisible(empty)
 
     def update_interface_with_restrictions_start(self):
         for handle in self._handles:
@@ -799,6 +836,8 @@ class OsmParserDialogMain(QtWidgets.QTabWidget, FORM_CLASS_main):
         self.detach_button.hide()
         self.limits_response = None
         self._limit_errors = {}
+        self._awaiting_credits = False
+        self.request_add_credits.setVisible(False)
         self.subscriptions_response = None
         self.prompts_label.clear()
         self.upload_button.setEnabled(True)

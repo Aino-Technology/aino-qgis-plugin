@@ -4,6 +4,8 @@ from qgis.PyQt.QtCore import Qt
 from src.analysis.actions import ActionPanel, WrappingLabel, report_text
 from src.analysis.presentation import diagnostic_text, present_analysis
 
+CREDITS_PAUSE_ERROR = "Analysis is waiting for additional credits"
+
 
 class AnalysisPanel(QtWidgets.QWidget):
     def __init__(self, parent=None):
@@ -24,6 +26,10 @@ class AnalysisPanel(QtWidgets.QWidget):
         self.notice = self._label("")
         self.outcome = self._label("")
         self.rejection = self._label("")
+        self.add_credits = QtWidgets.QPushButton("Add credits", self)
+        self.add_credits.setToolTip("Opens Aino in your browser")
+        layout.addWidget(self.add_credits)
+        self.add_credits.setVisible(False)
         self.steps = self._label("")
         self.explanation = self._label("")
         self.actions = ActionPanel(self)
@@ -65,8 +71,8 @@ class AnalysisPanel(QtWidgets.QWidget):
         error = latest.get("error")
         if error:
             self.set_notice(
-                "Analysis is waiting for additional credits"
-                if error == "Analysis is waiting for additional credits"
+                "Analysis is paused: not enough credits. Add credits and it continues on its own."
+                if error == CREDITS_PAUSE_ERROR
                 else "Analysis needs attention. See the steps and technical details."
             )
         else:

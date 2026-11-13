@@ -186,11 +186,13 @@ class LoginDialog(QDialog):
     def handle_signup(self, _checked=False):
         import webbrowser
 
+        from src import SIGNUP_URL
+
         if self._closing or self._error_dialog is not None or self.main_ui.unloading:
             return
         if self._request and self._request.active:
             return
-        webbrowser.open("https://app.aino.world/auth", new=0, autoraise=True)
+        webbrowser.open(SIGNUP_URL, new=0, autoraise=True)
         if self.main_ui.exec_signup(self):
             self.accept()
         elif not self.main_ui.unloading:

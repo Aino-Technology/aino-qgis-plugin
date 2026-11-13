@@ -585,7 +585,8 @@ def test_default_go_prepares_snapshot_and_repeated_ready_never_restarts(
                 error="Analysis is waiting for additional credits",
             )
         )
-        assert "additional credits" in dialog.analysis_status.text()
+        assert "not enough credits" in dialog.analysis_status.text()
+        assert not dialog.analysis_panel.add_credits.isHidden()
         assert dialog.analysis_actions.submit_button is None
         assert dialog.analysis_controller.state["start_intent"] == original
         dialog.close()
@@ -870,11 +871,14 @@ def test_native_rejection_controls_and_notice_survive_restart(
         dialog.close()
         restored = OsmParserDialogMain(osm_parser=owner)
         dialogs.append(restored)
-        assert "rejected" in restored.analysis_rejection.text()
         if operation == "start":
+            assert "rejected" in restored.analysis_rejection.text()
+            assert restored.analysis_panel.add_credits.isHidden()
             assert restored.go_button.isEnabled()
             assert not restored.analysis_resume.isEnabled()
         else:
+            assert "Not enough credits" in restored.analysis_rejection.text()
+            assert not restored.analysis_panel.add_credits.isHidden()
             assert restored.analysis_cancel.isEnabled()
             api.answer(state(task, 3, "completed"))
             assert restored.analysis_controller.state["latest"]["status"] == "completed"

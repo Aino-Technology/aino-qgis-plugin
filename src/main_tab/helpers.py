@@ -148,6 +148,20 @@ def update_days_label(main_ui, api_response):
             )
 
 
+def credits_left(response):
+    """Credits left on the account, or None when /user/limits doesn't say."""
+    limits = (response or {}).get("limits", [])
+    if not isinstance(limits, list):
+        return None
+    for limit in limits:
+        if not isinstance(limit, dict) or limit.get("name") != "credits":
+            continue
+        left = limit.get("left_amount")
+        if type(left) in {int, float}:
+            return left
+    return None
+
+
 def analysis_limits_text(response):
     fallback = "Aino checks credits and limits on submission."
     limits = (response or {}).get("limits", [])
