@@ -1,3 +1,9 @@
+# Aino QGIS 0.4.0 — credits guidance
+
+When the account has no credits, the request tab says so before the first GO and shows **Add credits**. The same button appears when a submission is rejected for insufficient credits or when a running analysis pauses waiting for credits. It opens the Aino credits page in the browser; the credit balance is re-read when QGIS becomes active again. A paused analysis continues on its own once credits are added.
+
+Sign-up links open with plugin attribution parameters, and the aino.world link in the start, login and sign-up dialogs now opens in the browser.
+
 # Aino QGIS 0.3.0 — request workspace
 
 ## Windows persistence fix (unreleased)

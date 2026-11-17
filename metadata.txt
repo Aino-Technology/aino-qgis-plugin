@@ -2,7 +2,7 @@
 name=Aino
 qgisMinimumVersion=3.44.15
 qgisMaximumVersion=4.99
-version=0.3.1
+version=0.4.0
 author=aino.world
 email=hello@aino.world
 description=Find geospatial data and run AI-powered spatial analysis directly in QGIS
@@ -12,7 +12,11 @@ about=Aino connects natural-language geospatial data search and multistep analys
     Interrupted operations can be resumed, and saved results can be imported again without starting a new analysis. Save the QGIS project explicitly to retain its Aino link and layers.
     An Aino account and an internet connection are required. Service usage and access to data sources depend on your account. GDAL 3.7 or newer is required.
 tags=ai,spatial analysis,geospatial,open data,openstreetmap,osm,vector,site selection
-changelog=0.3.1
+changelog=0.4.0
+    - Added an Add credits button when the account has no credits or an analysis is paused for credits; the balance refreshes when you return to QGIS.
+    - Clarified out-of-credits and paused-analysis messages.
+    - Sign-up links now carry plugin attribution, and the aino.world link in the login dialogs opens in the browser.
+    0.3.1
     - Removed subprocess execution when reading macOS text replacements.
     - Hardened saved QGS/QGZ identity parsing with the Qt XML stream reader, entity-declaration rejection and expansion limits.
     - Fixed initialization of the login button label for error handling.
