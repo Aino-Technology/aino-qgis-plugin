@@ -1,5 +1,9 @@
 API_LINK = "https://api.aino.world"
 
+# Aino's Mixpanel project token: the public one app.aino.world ships as NEXT_PUBLIC_MIXPANEL_TOKEN.
+# Empty turns usage events off.
+MIXPANEL_TOKEN = "1faae876ca4d67ef58cc45125ce80347"
+
 # UTM tags let Aino's analytics attribute a sign-up or a purchase to the plugin.
 SIGNUP_URL = (
     "https://app.aino.world/auth?utm_source=qgis&utm_medium=plugin&utm_campaign=signup"

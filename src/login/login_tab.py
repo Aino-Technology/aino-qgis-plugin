@@ -7,6 +7,8 @@ from qgis.PyQt.QtCore import QEvent, Qt
 from qgis.PyQt.QtGui import QPixmap
 from qgis.PyQt.QtWidgets import QDialog, QMessageBox
 
+from src.analytics import track
+
 
 _QT_KEY = getattr(Qt, "Key", Qt)
 _QT_TEXT_FORMAT = getattr(Qt, "TextFormat", Qt)
@@ -252,6 +254,7 @@ class LoginDialog(QDialog):
                 self.show_login_error(str(error), QMessageBox.Icon.Critical)
                 return
             self.main_ui.user_email = self._login_email
+            track("Authorized", self.main_ui.session.account_id, {"method": "password"})
             if getattr(self.main_ui, "main_dlg", None) is not None:
                 self.main_ui.main_dlg.set_account_email(self._login_email)
             self.accept()
