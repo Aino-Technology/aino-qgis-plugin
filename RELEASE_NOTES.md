@@ -4,6 +4,8 @@ When the account has no credits, the request tab says so before the first GO and
 
 Sign-up links open with plugin attribution parameters, and the aino.world link in the start, login and sign-up dialogs now opens in the browser.
 
+A successful sign-in sends one `Authorized` event to Aino's Mixpanel project (`source: qgis`, plugin and QGIS versions, OS), under the same account id the web app uses, so sign-ins from QGIS count next to the website's. It is sent in the background and never blocks login. The token is the public one the web app ships; emptying `MIXPANEL_TOKEN` in `src/__init__.py` turns the events off.
+
 # Aino QGIS 0.3.0 — request workspace
 
 ## Windows persistence fix (unreleased)

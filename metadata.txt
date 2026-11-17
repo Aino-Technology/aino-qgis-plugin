@@ -16,6 +16,7 @@ changelog=0.4.0
     - Added an Add credits button when the account has no credits or an analysis is paused for credits; the balance refreshes when you return to QGIS.
     - Clarified out-of-credits and paused-analysis messages.
     - Sign-up links now carry plugin attribution, and the aino.world link in the login dialogs opens in the browser.
+    - Signing in from the plugin is counted in Aino's product analytics, next to sign-ins on the website.
     0.3.1
     - Removed subprocess execution when reading macOS text replacements.
     - Hardened saved QGS/QGZ identity parsing with the Qt XML stream reader, entity-declaration rejection and expansion limits.
